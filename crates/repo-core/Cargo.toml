@@ -1,0 +1,43 @@
+[package]
+name = "atlas-repo-core"
+description = "Bounded, read-only repository traversal, parsing and shared security primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[lib]
+name = "repo_core"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+ignore.workspace = true
+blake3.workspace = true
+regex.workspace = true
+tree-sitter.workspace = true
+tree-sitter-php.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-python.workspace = true
+cap-std.workspace = true
+cap-fs-ext.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix.workspace = true
+
+[lints]
+workspace = true

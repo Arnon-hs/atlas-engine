@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/index-record-v1.schema.json",
+  "title": "Atlas Engine structural index record v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "repository_id",
+    "commit_sha",
+    "relative_path",
+    "language",
+    "chunk_id",
+    "content_hash",
+    "symbol_kind",
+    "symbol_name",
+    "qualified_name",
+    "start_line",
+    "end_line",
+    "start_byte",
+    "end_byte",
+    "content",
+    "redacted",
+    "redaction_count",
+    "part_index"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "repository_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "commit_sha": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "php",
+        "javascript",
+        "typescript",
+        "python",
+        "json",
+        "yaml",
+        "toml",
+        "markdown",
+        "shell",
+        "rust",
+        "unknown"
+      ]
+    },
+    "chunk_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "BLAKE3 of emitted redacted UTF-8 content, not original secret material."
+    },
+    "symbol_kind": {
+      "type": "string",
+      "enum": [
+        "file",
+        "class",
+        "interface",
+        "trait",
+        "function",
+        "method",
+        "constructor",
+        "module",
+        "constant"
+      ]
+    },
+    "symbol_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "qualified_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "start_line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "end_line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start_byte": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end_byte": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Exclusive end offset in the original source."
+    },
+    "content": {
+      "type": "string"
+    },
+    "redacted": {
+      "type": "boolean"
+    },
+    "redaction_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "part_index": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": true
+}

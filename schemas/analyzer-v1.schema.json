@@ -1,0 +1,353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/analyzer-v1.schema.json",
+  "title": "Atlas Engine repository analysis v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "repository",
+    "summary",
+    "languages",
+    "manifests",
+    "largest_files",
+    "duplicates",
+    "generated_files",
+    "test_files",
+    "documentation_files",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "repository_id",
+        "git"
+      ],
+      "properties": {
+        "repository_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git": {
+          "type": "object",
+          "required": [
+            "is_repository",
+            "commit_sha",
+            "branch"
+          ],
+          "properties": {
+            "is_repository": {
+              "type": "boolean"
+            },
+            "commit_sha": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "total_files",
+        "source_files",
+        "total_bytes",
+        "total_lines",
+        "source_lines",
+        "files_with_line_count",
+        "binary_files",
+        "unsupported_encoding_files",
+        "generated_files",
+        "test_files",
+        "documentation_files"
+      ],
+      "properties": {
+        "total_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_with_line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "binary_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported_encoding_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "test_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "documentation_files": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "language",
+          "files",
+          "source_files",
+          "bytes",
+          "lines",
+          "files_with_line_count"
+        ],
+        "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "php",
+              "javascript",
+              "typescript",
+              "python",
+              "json",
+              "yaml",
+              "toml",
+              "markdown",
+              "shell",
+              "rust",
+              "unknown"
+            ]
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lines": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "files_with_line_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "manifests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "relative_path",
+          "kind"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "largest_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "relative_path",
+          "size_bytes",
+          "language",
+          "line_count"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "php",
+              "javascript",
+              "typescript",
+              "python",
+              "json",
+              "yaml",
+              "toml",
+              "markdown",
+              "shell",
+              "rust",
+              "unknown"
+            ]
+          },
+          "line_count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "duplicates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "content_hash",
+          "size_bytes",
+          "files"
+        ],
+        "properties": {
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+            },
+            "minItems": 2,
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "generated_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+      }
+    },
+    "test_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+      }
+    },
+    "documentation_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "relative_path",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "relative_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,9 @@
+{
+  "package": "cargo-cyclonedx",
+  "version": "0.5.9",
+  "archive_url": "https://static.crates.io/crates/cargo-cyclonedx/cargo-cyclonedx-0.5.9.crate",
+  "archive_sha256": "5d162f67705f0f5038759d73bf546a083bf30e8677c2e944b416bca48d9d69a8",
+  "upstream_vcs_revision": "e58bd5590212f82c5b7e16dd3e2e819b0dbea5b1",
+  "path_in_vcs": "cargo-cyclonedx",
+  "lock_sha256": "3c028d6ce687b556184b199ab0a67634163ebdb68e20dda7c67181a1e9801fc3"
+}

@@ -1,0 +1,28 @@
+[package]
+name = "atlas-repo-security"
+description = "Bounded static secret and security signal scanning for source repositories"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+repo-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+blake3.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

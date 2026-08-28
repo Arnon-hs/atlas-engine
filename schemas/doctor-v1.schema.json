@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/doctor-v1.schema.json",
+  "title": "Atlas Engine input inspection v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "repository",
+    "selected_files",
+    "diagnostics",
+    "limits",
+    "ast_languages",
+    "network_required",
+    "repository_code_executed",
+    "symlinks_followed",
+    "external_process_isolation_required",
+    "git_history_available"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "repository_id",
+        "git"
+      ],
+      "properties": {
+        "repository_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git": {
+          "type": "object",
+          "required": [
+            "is_repository",
+            "commit_sha",
+            "branch"
+          ],
+          "properties": {
+            "is_repository": {
+              "type": "boolean"
+            },
+            "commit_sha": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "selected_files": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "relative_path",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "relative_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_file_size",
+        "max_files",
+        "max_total_bytes",
+        "max_depth",
+        "max_parse_millis",
+        "threads"
+      ],
+      "properties": {
+        "max_file_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_parse_millis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        }
+      },
+      "additionalProperties": true
+    },
+    "ast_languages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "php",
+          "javascript",
+          "typescript",
+          "python",
+          "json",
+          "yaml",
+          "toml",
+          "markdown",
+          "shell",
+          "rust",
+          "unknown"
+        ]
+      }
+    },
+    "network_required": {
+      "const": false
+    },
+    "repository_code_executed": {
+      "const": false
+    },
+    "symlinks_followed": {
+      "const": false
+    },
+    "external_process_isolation_required": {
+      "const": true
+    },
+    "git_history_available": {
+      "const": false
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,4 @@
+services:
+  fixture:
+    image: fixture.invalid/never-pull:example
+    privileged: true

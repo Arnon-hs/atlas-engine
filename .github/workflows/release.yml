@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'Arnon-hs/atlas-engine'
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      ATLAS_RELEASE_TARGET: ${{ matrix.target }}
+      ATLAS_RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate release identity
+        run: python3 scripts/prepare_release.py --validate-only
+      - run: rustup target add "$ATLAS_RELEASE_TARGET"
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace --all-features --target "$ATLAS_RELEASE_TARGET"
+      - run: cargo build --locked --workspace --release --target "$ATLAS_RELEASE_TARGET"
+      - name: Dependency policy and SBOM tooling
+        run: |
+          cargo install --locked cargo-deny --version 0.20.2
+          cargo install --locked cargo-audit --version 0.22.2
+          cargo deny --locked check
+          cargo audit --deny warnings
+          cargo audit --file fuzz/Cargo.lock --deny warnings
+      - name: Install audited, pinned-source SBOM tool
+        run: |
+          python3 scripts/install_cyclonedx.py --root "$RUNNER_TEMP/atlas-release-tools"
+          echo "$RUNNER_TEMP/atlas-release-tools/bin" >> "$GITHUB_PATH"
+      - name: Package with licenses, CycloneDX SBOM and source identity
+        run: python3 scripts/prepare_release.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Attest and draft release
+    if: github.repository == 'Arnon-hs/atlas-engine' && startsWith(github.ref, 'refs/tags/v') && vars.ATLAS_RELEASE_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The owner must create this environment, require approval and restrict tags.
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      # No checkout and no build code run with these privileges. These artifacts
+      # come only from build jobs in this same tag-triggered workflow run.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Validate artifact set and checksum manifests
+        env:
+          ATLAS_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re
+          tag = os.environ['ATLAS_RELEASE_TAG']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+', tag):
+              raise SystemExit('release tag must be vMAJOR.MINOR.PATCH')
+          targets = ('x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu',
+                     'aarch64-apple-darwin', 'x86_64-apple-darwin')
+          directory = pathlib.Path('dist')
+          expected = {f'atlas-engine-{tag}-{t}{suffix}' for t in targets
+                      for suffix in ('.tar.gz', '.cdx.json', '.release.json', '.sha256')}
+          actual = {p.name for p in directory.iterdir() if p.is_file() and not p.is_symlink()}
+          if actual != expected or len(list(directory.iterdir())) != len(expected):
+              raise SystemExit('unexpected or missing release artifact')
+          for manifest in sorted(directory.glob('*.sha256')):
+              expected_names = {manifest.name.removesuffix('.sha256') + suffix
+                                for suffix in ('.tar.gz', '.cdx.json', '.release.json')}
+              seen = set()
+              for line in manifest.read_text().splitlines():
+                  digest, name = line.split('  ', 1)
+                  if name not in expected_names or name in seen:
+                      raise SystemExit('invalid checksum subject')
+                  if hashlib.sha256((directory / name).read_bytes()).hexdigest() != digest:
+                      raise SystemExit('release checksum mismatch')
+                  seen.add(name)
+              if seen != expected_names:
+                  raise SystemExit('missing checksum subject')
+          combined = ''.join(p.read_text() for p in sorted(directory.glob('*.sha256')))
+          (directory / 'SHA256SUMS').write_text(combined)
+          PY
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+          create-storage-record: false
+      - name: Create draft only; maintainer reviews and publishes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ATLAS_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$ATLAS_RELEASE_TAG" dist/* --draft --verify-tag \
+            --title "atlas-engine $ATLAS_RELEASE_TAG" --generate-notes

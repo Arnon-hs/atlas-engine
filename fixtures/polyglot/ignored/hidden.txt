@@ -1,0 +1,1 @@
+VCS ignore fixture. This is not selected by the default scan.

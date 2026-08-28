@@ -1,0 +1,5 @@
+{
+  "name": "atlas-engine-test-fixture",
+  "private": true,
+  "scripts": {"postinstall": "touch SHOULD_NEVER_EXIST"}
+}

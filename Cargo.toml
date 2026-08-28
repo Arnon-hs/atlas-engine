@@ -1,0 +1,58 @@
+[workspace]
+members = [
+  "crates/repo-core",
+  "crates/repo-analyzer",
+  "crates/repo-indexer",
+  "crates/repo-security",
+  "crates/atlas-engine-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Arnon-hs/atlas-engine"
+homepage = "https://github.com/Arnon-hs/atlas-engine"
+keywords = ["static-analysis", "security", "code-search", "tree-sitter"]
+categories = ["development-tools", "command-line-utilities"]
+
+[workspace.dependencies]
+repo-core = { package = "atlas-repo-core", path = "crates/repo-core", version = "0.1.0" }
+repo-analyzer = { package = "atlas-repo-analyzer", path = "crates/repo-analyzer", version = "0.1.0" }
+repo-indexer = { package = "atlas-repo-indexer", path = "crates/repo-indexer", version = "0.1.0" }
+repo-security = { package = "atlas-repo-security", path = "crates/repo-security", version = "0.1.0" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+ignore = "0.4.33"
+blake3 = "1.8.7"
+rayon = "1.12.0"
+regex = "1.13.1"
+tree-sitter = "0.26.13"
+tree-sitter-php = "0.24.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-python = "0.25.0"
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
+libc = "0.2"
+rustix = { version = "1.1.4", features = ["fs"] }
+tempfile = "3.27.0"
+proptest = "1.11.0"
+criterion = { version = "0.8.2", default-features = false }
+jsonschema = { version = "0.52.0", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

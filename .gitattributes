@@ -1,0 +1,2 @@
+# Preserve upstream legal text byte-for-byte, including its CRLF line endings.
+schemas/vendor/OASIS-NOTICES.txt -text whitespace=trailing-space,space-before-tab,cr-at-eol

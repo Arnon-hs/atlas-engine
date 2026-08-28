@@ -1,0 +1,9 @@
+atlas-engine is available under either of the following licenses, at your option:
+
+  * MIT: LICENSE-MIT
+  * Apache License, Version 2.0: LICENSE-APACHE
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+
+Third-party components retain their own licenses. Binary release archives include
+third-party license texts and a dependency inventory under third-party-licenses/.

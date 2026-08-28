@@ -1,0 +1,3 @@
+5class Example:
+    def run(self):
+        return "hello"

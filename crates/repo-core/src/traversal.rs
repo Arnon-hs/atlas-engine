@@ -1,0 +1,656 @@
+use std::ffi::OsStr;
+use std::io::Read;
+use std::path::{Component, Path};
+use std::sync::Arc;
+
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+
+use crate::git::{self, GitState};
+use crate::{
+    CoreError, Diagnostic, FileRecord, RepositoryMetadata, ScanOptions, TrackingState, classify,
+    content_hash, normalize_relative_path,
+};
+
+const MAX_DIAGNOSTICS: usize = 1024;
+const MAX_DIRECTORY_ENTRIES: usize = 100_000;
+const MAX_IGNORE_BYTES: u64 = 64 * 1024;
+const MAX_TOTAL_IGNORE_BYTES: usize = 1024 * 1024;
+const MAX_IGNORE_PATTERNS: usize = 8192;
+
+/// A scan inventory plus an open directory capability. No absolute path is kept
+/// in its public model, diagnostics, or Debug representation.
+pub struct Repository {
+    pub files: Vec<FileRecord>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub metadata: RepositoryMetadata,
+    pub options: ScanOptions,
+    root: Arc<Dir>,
+}
+
+impl std::fmt::Debug for Repository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Repository")
+            .field("files", &self.files)
+            .field("diagnostics", &self.diagnostics)
+            .field("metadata", &self.metadata)
+            .field("options", &self.options)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Repository {
+    pub fn open(path: impl AsRef<Path>, options: ScanOptions) -> Result<Self, CoreError> {
+        validate_options(&options)?;
+        let root = Arc::new(open_root(path.as_ref())?);
+        let mut diagnostics = Vec::new();
+        let git = git::inspect(&root, &mut diagnostics);
+        let excludes = compile_patterns("", options.excludes.iter().map(String::as_str))
+            .map_err(|_| CoreError::Configuration("invalid exclusion pattern".into()))?;
+        let mut state = WalkState {
+            options: &options,
+            git: &git,
+            files: Vec::new(),
+            diagnostics,
+            excludes,
+            entries: 0,
+            read_bytes: 0,
+            ignore_bytes: 0,
+            ignore_patterns: 0,
+            stopped: false,
+            suppressed: 0,
+        };
+        let mut scopes = Vec::new();
+        if let Some(exclude) = &git.exclude {
+            state.ignore_bytes += exclude.len();
+            state.add_ignore_scope("", ".git/info/exclude", exclude, &mut scopes);
+        }
+        state.walk(&root, "", 0, &mut scopes, false);
+        state
+            .files
+            .sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        state.diagnostics.sort_by(|a, b| {
+            a.relative_path
+                .cmp(&b.relative_path)
+                .then(a.code.cmp(&b.code))
+        });
+        let files = std::mem::take(&mut state.files);
+        let diagnostics = std::mem::take(&mut state.diagnostics);
+        drop(state);
+        Ok(Self {
+            files,
+            diagnostics,
+            metadata: RepositoryMetadata {
+                repository_id: options.repository_id.clone(),
+                git: git.metadata,
+            },
+            options,
+            root,
+        })
+    }
+
+    /// Reread through the retained capability, with every component opened without
+    /// following links. Content drift is an explicit skip, never silent substitution.
+    pub fn read_text(&self, file: &FileRecord) -> Result<String, Diagnostic> {
+        if !normalize_relative_path(Path::new(&file.relative_path))
+            .is_ok_and(|path| path == file.relative_path)
+        {
+            return Err(Diagnostic::new(
+                "path_rejected",
+                None,
+                "File path is not a safe portable relative path",
+            ));
+        }
+        if file.binary || !file.utf8 {
+            return Err(Diagnostic::new(
+                "non_text_file",
+                Some(&file.relative_path),
+                "Binary or non-UTF-8 content cannot be read as text",
+            ));
+        }
+        let bytes = read_relative(
+            &self.root,
+            &file.relative_path,
+            self.options.max_file_size.min(64 * 1024 * 1024),
+        )
+        .map_err(|err| err.diagnostic(Some(&file.relative_path)))?;
+        if bytes.len() as u64 != file.size_bytes || content_hash(&bytes) != file.content_hash {
+            return Err(Diagnostic::new(
+                "file_changed",
+                Some(&file.relative_path),
+                "File content changed since inventory; use an immutable snapshot",
+            ));
+        }
+        String::from_utf8(bytes).map_err(|_| {
+            Diagnostic::new(
+                "file_changed",
+                Some(&file.relative_path),
+                "File is no longer valid UTF-8",
+            )
+        })
+    }
+}
+
+fn validate_options(options: &ScanOptions) -> Result<(), CoreError> {
+    let invalid = |message: &str| CoreError::Configuration(message.into());
+    if !(1..=64 * 1024 * 1024).contains(&options.max_file_size) {
+        return Err(invalid("max_file_size must be between 1 byte and 64 MiB"));
+    }
+    if !(1..=1_000_000).contains(&options.max_files) {
+        return Err(invalid("max_files must be between 1 and 1000000"));
+    }
+    if !(1..=64 * 1024 * 1024 * 1024).contains(&options.max_total_bytes) {
+        return Err(invalid("max_total_bytes must be between 1 byte and 64 GiB"));
+    }
+    if !(1..=256).contains(&options.max_depth) {
+        return Err(invalid("max_depth must be between 1 and 256"));
+    }
+    if !(1..=10_000).contains(&options.max_parse_millis) {
+        return Err(invalid("max_parse_millis must be between 1 and 10000"));
+    }
+    if !(1..=32).contains(&options.threads) {
+        return Err(invalid("threads must be between 1 and 32"));
+    }
+    if options.excludes.len() > 128
+        || options
+            .excludes
+            .iter()
+            .any(|p| p.len() > 1024 || p.contains(['\n', '\r', '\0']))
+    {
+        return Err(invalid(
+            "at most 128 single-line exclusion patterns of at most 1024 bytes are allowed",
+        ));
+    }
+    if options.repository_id.as_ref().is_some_and(|id| {
+        id.len() > 1024 || id.chars().any(char::is_control) || !crate::detect_secrets(id).is_empty()
+    }) {
+        return Err(invalid(
+            "repository_id must contain at most 1024 bytes without controls or high-confidence secrets",
+        ));
+    }
+    Ok(())
+}
+
+fn open_root(path: &Path) -> Result<Dir, CoreError> {
+    let invalid = || {
+        CoreError::Input(
+            "repository root is unavailable, not a directory, or a symbolic link".into(),
+        )
+    };
+    let absolute = std::path::absolute(path).map_err(|_| invalid())?;
+    // Trust the user-selected parent as an ambient starting point; the final
+    // repository component itself must not be a symlink, including trailing '/'.
+    if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name()) {
+        let parent = Dir::open_ambient_dir(parent, ambient_authority()).map_err(|_| invalid())?;
+        return parent.open_dir_nofollow(name).map_err(|_| invalid());
+    }
+    if absolute
+        .components()
+        .all(|p| matches!(p, Component::RootDir | Component::Prefix(_)))
+    {
+        return Dir::open_ambient_dir(absolute, ambient_authority()).map_err(|_| invalid());
+    }
+    Err(invalid())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReadFailure {
+    NotFound,
+    Symlink,
+    Special,
+    TooLarge,
+    Changed,
+    InvalidPath,
+    Io,
+}
+
+impl ReadFailure {
+    pub(crate) fn diagnostic(self, path: Option<&str>) -> Diagnostic {
+        let (code, message) = match self {
+            Self::NotFound | Self::Io => ("file_read_failed", "File could not be safely read"),
+            Self::Symlink => ("symlink_skipped", "Symbolic links are not followed"),
+            Self::Special => ("special_file_skipped", "Only regular files are read"),
+            Self::TooLarge => ("file_too_large", "File exceeds its read budget"),
+            Self::Changed => (
+                "file_changed",
+                "File changed during reading; use an immutable snapshot",
+            ),
+            Self::InvalidPath => ("path_rejected", "File path is not a portable relative path"),
+        };
+        Diagnostic::new(code, path, message)
+    }
+}
+
+fn io_failure(error: std::io::Error) -> ReadFailure {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        ReadFailure::NotFound
+    } else {
+        ReadFailure::Io
+    }
+}
+
+/// Only a single file name is accepted here, so no intermediate symlink can be
+/// resolved by open_with. Nonblocking opens prevent a FIFO replacement race.
+pub(crate) fn read_regular(dir: &Dir, name: &OsStr, limit: u64) -> Result<Vec<u8>, ReadFailure> {
+    if Path::new(name).components().count() != 1
+        || !matches!(
+            Path::new(name).components().next(),
+            Some(Component::Normal(_))
+        )
+    {
+        return Err(ReadFailure::InvalidPath);
+    }
+    let before = dir.symlink_metadata(name).map_err(io_failure)?;
+    if before.is_symlink() {
+        return Err(ReadFailure::Symlink);
+    }
+    if !before.is_file() {
+        return Err(ReadFailure::Special);
+    }
+    if before.len() > limit {
+        return Err(ReadFailure::TooLarge);
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_fs_ext::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
+    let mut file = dir.open_with(name, &options).map_err(io_failure)?;
+    let opened = file.metadata().map_err(io_failure)?;
+    if !opened.is_file() {
+        return Err(ReadFailure::Special);
+    }
+    if opened.len() > limit {
+        return Err(ReadFailure::TooLarge);
+    }
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    file.by_ref()
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io_failure)?;
+    if bytes.len() as u64 > limit {
+        return Err(ReadFailure::TooLarge);
+    }
+    let after = file.metadata().map_err(io_failure)?;
+    if opened.len() != bytes.len() as u64
+        || after.len() != opened.len()
+        || opened.modified().ok() != after.modified().ok()
+    {
+        return Err(ReadFailure::Changed);
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn read_relative(root: &Dir, path: &str, limit: u64) -> Result<Vec<u8>, ReadFailure> {
+    let normalized =
+        normalize_relative_path(Path::new(path)).map_err(|_| ReadFailure::InvalidPath)?;
+    if normalized != path {
+        return Err(ReadFailure::InvalidPath);
+    }
+    let mut components = normalized.split('/').peekable();
+    let mut nested: Option<Dir> = None;
+    while let Some(part) = components.next() {
+        let current = nested.as_ref().unwrap_or(root);
+        if components.peek().is_none() {
+            return read_regular(current, OsStr::new(part), limit);
+        }
+        nested = Some(current.open_dir_nofollow(part).map_err(io_failure)?);
+    }
+    Err(ReadFailure::InvalidPath)
+}
+
+fn compile_patterns<'a>(root: &str, lines: impl Iterator<Item = &'a str>) -> Result<Gitignore, ()> {
+    let mut builder = GitignoreBuilder::new(root);
+    for line in lines {
+        builder.add_line(None, line).map_err(|_| ())?;
+    }
+    builder.build().map_err(|_| ())
+}
+
+struct WalkState<'a> {
+    options: &'a ScanOptions,
+    git: &'a GitState,
+    files: Vec<FileRecord>,
+    diagnostics: Vec<Diagnostic>,
+    excludes: Gitignore,
+    entries: usize,
+    read_bytes: u64,
+    ignore_bytes: usize,
+    ignore_patterns: usize,
+    stopped: bool,
+    suppressed: usize,
+}
+
+impl WalkState<'_> {
+    fn diagnostic(&mut self, diagnostic: Diagnostic) {
+        if self.diagnostics.len() < MAX_DIAGNOSTICS - 1 {
+            self.diagnostics.push(diagnostic);
+        } else {
+            self.suppressed += 1;
+            let limited = Diagnostic::new(
+                "diagnostic_limit",
+                None,
+                &format!(
+                    "{} additional diagnostics omitted by retention budget",
+                    self.suppressed
+                ),
+            );
+            if self.diagnostics.len() == MAX_DIAGNOSTICS - 1 {
+                self.diagnostics.push(limited)
+            } else {
+                self.diagnostics[MAX_DIAGNOSTICS - 1] = limited
+            }
+        }
+    }
+
+    fn add_ignore_scope(
+        &mut self,
+        prefix: &str,
+        path: &str,
+        source: &str,
+        scopes: &mut Vec<Gitignore>,
+    ) {
+        let count = source.lines().count();
+        if source.len() > MAX_IGNORE_BYTES as usize
+            || self.ignore_patterns + count > MAX_IGNORE_PATTERNS
+            || source.lines().any(|line| line.len() > 1024)
+        {
+            self.diagnostic(Diagnostic::new(
+                "ignore_limit",
+                Some(path),
+                "Ignore rules exceed metadata budget; rules were not applied",
+            ));
+            return;
+        }
+        self.ignore_patterns += count;
+        match compile_patterns(prefix, source.lines()) {
+            Ok(matcher) => scopes.push(matcher),
+            Err(()) => self.diagnostic(Diagnostic::new(
+                "ignore_invalid",
+                Some(path),
+                "Invalid ignore rules were not applied",
+            )),
+        }
+    }
+
+    fn walk(
+        &mut self,
+        dir: &Dir,
+        prefix: &str,
+        depth: usize,
+        scopes: &mut Vec<Gitignore>,
+        ignored_parent: bool,
+    ) {
+        if self.stopped {
+            return;
+        }
+        let scope_count = scopes.len();
+        let ignore_path = if prefix.is_empty() {
+            ".gitignore".to_owned()
+        } else {
+            format!("{prefix}/.gitignore")
+        };
+        // Charge attempted ignore reads before UTF-8/grammar validation. Metadata
+        // that is malformed or concurrently changed still consumes this budget.
+        let ignore_read = match dir.symlink_metadata(".gitignore") {
+            Ok(meta) if meta.len() > MAX_IGNORE_BYTES => Err(ReadFailure::TooLarge),
+            Ok(meta)
+                if meta.len() as usize
+                    > MAX_TOTAL_IGNORE_BYTES.saturating_sub(self.ignore_bytes) =>
+            {
+                self.diagnostic(Diagnostic::new(
+                    "ignore_limit",
+                    Some(&ignore_path),
+                    "Total ignore metadata read budget reached; rules were not read",
+                ));
+                Err(ReadFailure::NotFound)
+            }
+            Ok(meta) => {
+                self.ignore_bytes += meta.len() as usize;
+                read_regular(dir, OsStr::new(".gitignore"), meta.len())
+            }
+            Err(error) => Err(io_failure(error)),
+        };
+        match ignore_read {
+            Ok(bytes) => match std::str::from_utf8(&bytes) {
+                Ok(source) => self.add_ignore_scope(prefix, &ignore_path, source, scopes),
+                Err(_) => self.diagnostic(Diagnostic::new(
+                    "ignore_invalid",
+                    Some(&ignore_path),
+                    "Ignore rules are not valid UTF-8",
+                )),
+            },
+            Err(ReadFailure::NotFound) => {}
+            Err(error) => self.diagnostic(error.diagnostic(Some(&ignore_path))),
+        }
+        let entries = match dir.entries() {
+            Ok(entries) => entries,
+            Err(_) => {
+                self.diagnostic(Diagnostic::new(
+                    "directory_read_failed",
+                    (!prefix.is_empty()).then_some(prefix),
+                    "Directory could not be safely enumerated",
+                ));
+                scopes.truncate(scope_count);
+                return;
+            }
+        };
+        let entry_limit = self
+            .options
+            .max_files
+            .saturating_mul(16)
+            .clamp(1024, 2_000_000);
+        let mut names = Vec::new();
+        for entry in entries {
+            self.entries += 1;
+            if self.entries > entry_limit || names.len() >= MAX_DIRECTORY_ENTRIES {
+                self.diagnostic(Diagnostic::new(
+                    "max_entries",
+                    (!prefix.is_empty()).then_some(prefix),
+                    "Directory entry budget reached; incomplete directory was not scanned",
+                ));
+                self.stopped = true;
+                scopes.truncate(scope_count);
+                return;
+            }
+            match entry {
+                Ok(entry) => names.push(entry.file_name()),
+                Err(_) => self.diagnostic(Diagnostic::new(
+                    "directory_entry_failed",
+                    (!prefix.is_empty()).then_some(prefix),
+                    "Directory entry was unavailable",
+                )),
+            }
+        }
+        names.sort();
+        for name in names {
+            if self.stopped {
+                break;
+            }
+            let Some(name_str) = name.to_str() else {
+                self.diagnostic(Diagnostic::new(
+                    "non_utf8_path",
+                    (!prefix.is_empty()).then_some(prefix),
+                    "A non-UTF-8 filename was skipped without lossy conversion",
+                ));
+                continue;
+            };
+            let relative = if prefix.is_empty() {
+                name_str.to_owned()
+            } else {
+                format!("{prefix}/{name_str}")
+            };
+            if normalize_relative_path(Path::new(&relative)).is_err() {
+                self.diagnostic(Diagnostic::new(
+                    "path_rejected",
+                    None,
+                    "A filename outside the portable path model was skipped",
+                ));
+                continue;
+            }
+            let meta = match dir.symlink_metadata(&name) {
+                Ok(meta) => meta,
+                Err(_) => {
+                    self.diagnostic(Diagnostic::new(
+                        "file_metadata_failed",
+                        Some(&relative),
+                        "File metadata was unavailable",
+                    ));
+                    continue;
+                }
+            };
+            let is_dir = meta.is_dir();
+            if name_str.eq_ignore_ascii_case(".git")
+                || (is_dir
+                    && matches!(
+                        name_str,
+                        "node_modules"
+                            | "vendor"
+                            | "target"
+                            | "dist"
+                            | "build"
+                            | "coverage"
+                            | ".cache"
+                    ))
+            {
+                self.diagnostic(Diagnostic::new(
+                    "ignored_engine",
+                    Some(&relative),
+                    "Excluded by engine policy",
+                ));
+                continue;
+            }
+            if self.excludes.matched(&relative, is_dir).is_ignore() {
+                self.diagnostic(Diagnostic::new(
+                    "excluded_user",
+                    Some(&relative),
+                    "Excluded by caller pattern",
+                ));
+                continue;
+            }
+            let vcs_match = scopes.iter().rev().find_map(|matcher| {
+                let matched = matcher.matched_path_or_any_parents(&relative, is_dir);
+                if matched.is_none() {
+                    None
+                } else {
+                    Some(matched.is_ignore())
+                }
+            });
+            // Git ignore rules do not erase already-tracked evidence, including
+            // an accidentally staged .env. Engine/user policy still takes precedence.
+            if (ignored_parent || vcs_match == Some(true))
+                && !self.git.tracked_or_parent(&relative, is_dir)
+            {
+                self.diagnostic(Diagnostic::new(
+                    "ignored_vcs",
+                    Some(&relative),
+                    "Excluded by repository ignore rules",
+                ));
+                continue;
+            }
+            if meta.is_symlink() {
+                self.diagnostic(ReadFailure::Symlink.diagnostic(Some(&relative)));
+                continue;
+            }
+            if is_dir {
+                if depth >= self.options.max_depth {
+                    self.diagnostic(Diagnostic::new(
+                        "max_depth",
+                        Some(&relative),
+                        "Directory depth budget reached",
+                    ));
+                    continue;
+                }
+                match dir.open_dir_nofollow(&name) {
+                    Ok(child) => self.walk(
+                        &child,
+                        &relative,
+                        depth + 1,
+                        scopes,
+                        ignored_parent || vcs_match == Some(true),
+                    ),
+                    Err(_) => self.diagnostic(Diagnostic::new(
+                        "directory_open_failed",
+                        Some(&relative),
+                        "Directory could not be opened without following links",
+                    )),
+                }
+                continue;
+            }
+            if !meta.is_file() {
+                self.diagnostic(ReadFailure::Special.diagnostic(Some(&relative)));
+                continue;
+            }
+            if self.files.len() >= self.options.max_files {
+                self.diagnostic(Diagnostic::new(
+                    "max_files",
+                    None,
+                    "File count budget reached",
+                ));
+                self.stopped = true;
+                break;
+            }
+            if meta.len() > self.options.max_file_size {
+                self.diagnostic(ReadFailure::TooLarge.diagnostic(Some(&relative)));
+                continue;
+            }
+            if meta.len() > self.options.max_total_bytes.saturating_sub(self.read_bytes) {
+                self.diagnostic(Diagnostic::new(
+                    "max_total_bytes",
+                    Some(&relative),
+                    "File exceeds remaining total read budget",
+                ));
+                continue;
+            }
+            // Charge attempted reads, not only successful records, so a mutating
+            // input cannot force unlimited repeated failed reads.
+            self.read_bytes += meta.len();
+            match read_regular(dir, &name, meta.len()) {
+                Ok(bytes) => {
+                    let class = classify(&relative, &bytes);
+                    if !class.utf8 {
+                        self.diagnostic(Diagnostic::new(
+                            "unsupported_encoding",
+                            Some(&relative),
+                            "Non-UTF-8 content is retained only in the file inventory",
+                        ));
+                    } else if class.binary {
+                        self.diagnostic(Diagnostic::new(
+                            "binary_file",
+                            Some(&relative),
+                            "Binary content is retained only in the file inventory",
+                        ));
+                    }
+                    let tracking =
+                        self.git
+                            .tracked
+                            .as_ref()
+                            .map_or(TrackingState::Unknown, |tracked| {
+                                if tracked.contains(&relative) {
+                                    TrackingState::Tracked
+                                } else {
+                                    TrackingState::Untracked
+                                }
+                            });
+                    self.files.push(FileRecord {
+                        relative_path: relative,
+                        size_bytes: bytes.len() as u64,
+                        language: class.language,
+                        binary: class.binary,
+                        generated: class.generated,
+                        content_hash: content_hash(&bytes),
+                        line_count: class.line_count,
+                        utf8: class.utf8,
+                        tracking,
+                    });
+                }
+                Err(error) => self.diagnostic(error.diagnostic(Some(&relative))),
+            }
+        }
+        scopes.truncate(scope_count);
+    }
+}

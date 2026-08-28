@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a scoped improvement to static analysis or public contracts.
+title: '[Feature]: '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Who needs this, and what cannot be done with the current engine?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal and acceptance criteria
+      description: Describe expected output, supported languages, and one concrete test case.
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Alternatives and risks
+      description: Consider deterministic output, hostile inputs, limits, redaction, compatibility and maintenance.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: I read the README scope and did not include private source, credentials, or vulnerability details.
+          required: true

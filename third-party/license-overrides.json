@@ -1,0 +1,12 @@
+[
+  {
+    "name": "tree-sitter-typescript",
+    "version": "0.23.2",
+    "source_revision": "f975a621f4e7f532fe322e13c4f79495e0a7b2e7",
+    "source_url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE",
+    "cargo_checksum": "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff",
+    "license_path": "third-party/licenses/tree-sitter-typescript-0.23.2/LICENSE",
+    "license_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+    "reason": "The published crate include list omits LICENSE; copied unmodified from the exact .cargo_vcs_info.json revision."
+  }
+]

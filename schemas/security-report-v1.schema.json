@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/security-report-v1.schema.json",
+  "title": "Atlas Engine static security report v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "repository",
+    "files_scanned",
+    "findings_by_severity",
+    "findings",
+    "diagnostics",
+    "truncated"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "repository_id",
+        "git"
+      ],
+      "properties": {
+        "repository_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git": {
+          "type": "object",
+          "required": [
+            "is_repository",
+            "commit_sha",
+            "branch"
+          ],
+          "properties": {
+            "is_repository": {
+              "type": "boolean"
+            },
+            "commit_sha": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "files_scanned": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "findings_by_severity": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "engine_version",
+          "repository_id",
+          "commit_sha",
+          "rule_id",
+          "severity",
+          "confidence",
+          "kind",
+          "relative_path",
+          "line",
+          "column",
+          "message",
+          "fingerprint",
+          "redacted_preview"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "1.0"
+          },
+          "engine_version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+          },
+          "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rule_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "medium",
+              "high"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "secret",
+              "dangerous_primitive",
+              "configuration"
+            ]
+          },
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "message": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "redacted_preview": {
+            "enum": [
+              null,
+              "[REDACTED]"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "relative_path",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "relative_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "True when a budget, parser/input/read error, or omitted diagnostic prevented complete coverage within the selected scan scope. Explicit policy exclusions are outside that scope."
+    }
+  },
+  "additionalProperties": true
+}

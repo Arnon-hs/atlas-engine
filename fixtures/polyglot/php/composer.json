@@ -1,0 +1,5 @@
+{
+  "name": "test-only/hostile-input",
+  "description": "Inert fixture: never install or execute",
+  "scripts": {"post-install-cmd": "touch SHOULD_NEVER_EXIST"}
+}

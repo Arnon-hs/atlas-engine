@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security reporting instructions
+    url: https://github.com/Arnon-hs/atlas-engine/blob/main/SECURITY.md
+    about: Never post vulnerabilities or secrets in a public issue. Check whether Private Vulnerability Reporting is enabled.
+  - name: Usage and support
+    url: https://github.com/Arnon-hs/atlas-engine/blob/main/SUPPORT.md
+    about: Support scope, safe reproductions, and CLI documentation.

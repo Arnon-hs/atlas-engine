@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/security-finding-v1.schema.json",
+  "title": "Atlas Engine static security finding v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "repository_id",
+    "commit_sha",
+    "rule_id",
+    "severity",
+    "confidence",
+    "kind",
+    "relative_path",
+    "line",
+    "column",
+    "message",
+    "fingerprint",
+    "redacted_preview"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "repository_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "commit_sha": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rule_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "medium",
+        "high"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "secret",
+        "dangerous_primitive",
+        "configuration"
+      ]
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$"
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "column": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "message": {
+      "type": "string"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "redacted_preview": {
+      "enum": [
+        null,
+        "[REDACTED]"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

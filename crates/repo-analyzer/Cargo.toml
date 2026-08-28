@@ -1,0 +1,27 @@
+[package]
+name = "atlas-repo-analyzer"
+description = "Deterministic, bounded repository structure and statistics for Atlas Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[lib]
+name = "repo_analyzer"
+
+[dependencies]
+repo-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

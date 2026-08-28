@@ -1,0 +1,7 @@
+# Development-only libFuzzer, never part of the engine release graph.
+# Preserve the upstream declared NCSA requirement despite differing C++ headers.
+# Do not distribute fuzz binaries without reconciling the upstream license texts.
+# Exact review evidence and follow-up: ../docs/security/dependency-policy.md.
+exceptions = [
+  { crate = "libfuzzer-sys@=0.4.13", allow = ["NCSA"] },
+]

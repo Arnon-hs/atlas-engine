@@ -1,0 +1,35 @@
+[package]
+name = "atlas-engine"
+description = "Offline, read-only source repository analysis, structural indexing and security scanning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+exclude = ["tests/contracts.rs"] # Workspace fixture/schema contract tests run in Git CI, not isolated crate packages.
+
+[[bin]]
+name = "atlas-engine"
+path = "src/main.rs"
+
+[dependencies]
+repo-core.workspace = true
+repo-analyzer.workspace = true
+repo-indexer.workspace = true
+repo-security.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+jsonschema.workspace = true
+blake3.workspace = true
+
+[lints]
+workspace = true

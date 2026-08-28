@@ -1,0 +1,37 @@
+[package]
+name = "atlas-repo-indexer"
+description = "AST-aware, secret-redacted, deterministic JSONL indexing for Atlas Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[lib]
+name = "repo_indexer"
+
+[dependencies]
+repo-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+criterion.workspace = true
+repo-analyzer.workspace = true
+repo-security.workspace = true
+
+[[bench]]
+name = "engine"
+harness = false
+
+[lints]
+workspace = true

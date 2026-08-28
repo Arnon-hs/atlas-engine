@@ -1,0 +1,53 @@
+[package]
+name = "atlas-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+repo-core = { package = "atlas-repo-core", version = "0.1.0", path = "../crates/repo-core" }
+repo-indexer = { package = "atlas-repo-indexer", version = "0.1.0", path = "../crates/repo-indexer" }
+
+[workspace]
+members = ["."]
+resolver = "3"
+
+[[bin]]
+name = "file_classification"
+path = "fuzz_targets/file_classification.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "secret_detector"
+path = "fuzz_targets/secret_detector.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunking"
+path = "fuzz_targets/chunking.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "path_handling"
+path = "fuzz_targets/path_handling.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tree_sitter_wrapper"
+path = "fuzz_targets/tree_sitter_wrapper.rs"
+test = false
+doc = false
+bench = false
