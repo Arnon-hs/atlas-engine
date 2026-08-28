@@ -2,10 +2,14 @@
 
 Date: 2026-08-29. Scope: standalone source implementation and local verification.
 The GitHub repository `Arnon-hs/atlas-engine` was verified public and empty at the
-start. The user subsequently authorized committing and pushing the source to
-`main`; publication evidence is recorded after that action is verified. No tag,
-release, GitHub setting change, crates.io publication, hosted CI pass, OpenSSF
-certification or SLSA level follows from the local results below.
+start. After the user's explicit authorization, all 151 source/documentation/test
+files were committed and pushed to `main`. GitHub's ref and recursive tree API
+confirmed source commit
+[`f06912d3964d68ac33e17eb52ce722fdf6a3d93d`](https://github.com/Arnon-hs/atlas-engine/commit/f06912d3964d68ac33e17eb52ce722fdf6a3d93d)
+and the full file set. CI, CodeQL and Scorecard were observed starting for that
+commit; their completion is separate evidence. This report's subsequent update
+only records verified publication. No tag, release, GitHub setting change,
+crates.io publication, OpenSSF certification or SLSA level is claimed.
 
 ## 1. Architecture
 
@@ -116,7 +120,7 @@ See the [threat model](security/threat-model.md) and
 ## 7. OpenSSF source controls
 
 The [OSPS Baseline v2026.02.19 matrix](security/openssf-osps-baseline.md) maps all
-65 published requirement IDs: **21 MET**, **41 PLANNED**, **3 NOT_APPLICABLE**.
+65 published requirement IDs: **23 MET**, **39 PLANNED**, **3 NOT_APPLICABLE**.
 MET denotes only the linked local artifact/policy, not hosted enforcement or
 achievement of a complete maturity level.
 
@@ -176,8 +180,9 @@ material retains its separate terms. The fuzz dependency's inconsistent declared
 NCSA/bundled LLVM terms need manual reconciliation before distributing fuzz
 binaries; that tool is outside the engine release graph.
 
-There is no release archive with genuine source-commit provenance yet: this
-initial source tree is uncommitted. See [release procedure](releases.md),
+There is no official release archive or version tag yet. The source is now
+committed/published, but the earlier local SBOM is not hosted release provenance.
+See [release procedure](releases.md),
 [tool evidence](security/tooling-evidence.md) and [SBOM toolchain](security/sbom-toolchain.md).
 
 ## 11. Final local verification

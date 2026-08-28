@@ -81,6 +81,8 @@ results, independent security review, package publication or release approval.
   in the [readiness matrix](openssf-osps-baseline.md), including retired controls.
   Completeness of that mapping does not mean all controls are met.
 
-No tagged release archive or hosted attestation was generated during these checks:
-the initial uncommitted source checkout has no valid release revision. Follow the
-[release gate](../releases.md) after a reviewed commit and explicit authorization.
+No tagged release archive or hosted attestation was generated during these checks.
+The tested source was subsequently committed and pushed with explicit user
+authorization; see [verified source publication](../delivery-report-v0.1.0.md).
+That action does not authorize tags/releases or establish release provenance.
+Follow the [release gate](../releases.md) separately.

@@ -50,6 +50,8 @@ flowchart TD
 
 See the [architecture decisions](docs/architecture/ADR-001-rust-workspace.md) and
 [threat model](docs/security/threat-model.md).
+The [v0.1 delivery report](docs/delivery-report-v0.1.0.md) records actual local
+verification, measured benchmarks, source publication and remaining owner actions.
 
 ## Build and run
 

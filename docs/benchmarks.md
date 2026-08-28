@@ -56,6 +56,12 @@ regression decisions. The final measurements ran after the code fixes and after
 the Linux tests/build/runtime checks ended. CPU affinity, other machine workloads,
 power mode, storage characteristics and cold-cache behavior were not controlled.
 
+The implementation and benchmark harness were subsequently published unchanged
+in source commit
+[`f06912d3964d68ac33e17eb52ce722fdf6a3d93d`](https://github.com/Arnon-hs/atlas-engine/commit/f06912d3964d68ac33e17eb52ce722fdf6a3d93d).
+Publication does not retroactively make the measurement a clean-checkout or
+reproducible benchmark run.
+
 Environment: macOS 26.5.1 (25F80), Apple M4, 10 logical CPUs, 16 GiB RAM,
 `aarch64-apple-darwin`, Rust 1.98.0 (`88d9e12ae`, 2026-08-18), LLVM 22.1.8.
 The run used four scanner workers and the workspace optimized bench profile.

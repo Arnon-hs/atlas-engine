@@ -80,8 +80,8 @@ controls are included as targets, without asserting maturity.
 
 | Requirement | Status | Evidence or remaining work |
 | --- | --- | --- |
-| OSPS-QA-01.01 | PLANNED | Remote visibility is public at a stable URL, but this initial source tree has not been published by this task |
-| OSPS-QA-01.02 | PLANNED | No initial committed/published change history yet; source authorship/timestamps must come from real Git records |
+| OSPS-QA-01.01 | MET | Public repository and 151-file source tree verified through GitHub after the authorized push; [publication evidence](../delivery-report-v0.1.0.md) |
+| OSPS-QA-01.02 | MET | Actual published [initial Git commit](https://github.com/Arnon-hs/atlas-engine/commit/f06912d3964d68ac33e17eb52ce722fdf6a3d93d) records source changes, author and timestamp; this does not establish contributor-rights/DCO review |
 | OSPS-QA-02.01 | MET | [Workspace Cargo manifest](../../Cargo.toml), member manifests, and lockfile enumerate language dependencies; separate [SBOM tool lock](../../tools/cargo-cyclonedx/Cargo.lock) is explicit |
 | OSPS-QA-02.02 | PLANNED | Target-specific CycloneDX generation is prepared; no released compiled asset with verified SBOM yet |
 | OSPS-QA-03.01 | PLANNED | Required-check enforcement and first hosted passes are not established |
