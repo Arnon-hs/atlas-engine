@@ -101,7 +101,9 @@ jobs:
           online-audits: false
           persona: regular
           version: v1.29.0
-          token: ''
+          # The action always exports GH_TOKEN; zizmor rejects an empty value.
+          # This fixed non-secret sentinel cannot authorize GitHub API access.
+          token: offline
           advanced-security: false
           annotations: false
           color: false
