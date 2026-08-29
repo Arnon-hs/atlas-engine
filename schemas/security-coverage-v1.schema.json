@@ -1,0 +1,904 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/security-coverage-v1.schema.json",
+  "title": "Atlas Engine native security coverage v1",
+  "$ref": "#/$defs/security_coverage",
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unsupported",
+        "excluded",
+        "not_reported"
+      ]
+    },
+    "aggregateStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial"
+      ]
+    },
+    "domain": {
+      "type": "string",
+      "enum": [
+        "secrets",
+        "dangerous_primitives",
+        "configuration",
+        "execution_surface",
+        "bounded_dataflow"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "php",
+        "javascript",
+        "typescript",
+        "python",
+        "json",
+        "yaml",
+        "toml",
+        "markdown",
+        "shell",
+        "rust",
+        "unknown"
+      ]
+    },
+    "nullable_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "reason_codes": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      }
+    },
+    "stages": {
+      "type": "object",
+      "required": [
+        "selected",
+        "read",
+        "parsed",
+        "evaluated"
+      ],
+      "properties": {
+        "selected": {
+          "type": "boolean"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "parsed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "evaluated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "read": {
+                "const": true
+              }
+            },
+            "required": [
+              "read"
+            ]
+          },
+          "then": {
+            "properties": {
+              "selected": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "parsed": {
+                "const": true
+              }
+            },
+            "required": [
+              "parsed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "read": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluated": {
+                "const": true
+              }
+            },
+            "required": [
+              "evaluated"
+            ]
+          },
+          "then": {
+            "properties": {
+              "read": {
+                "const": true
+              },
+              "parsed": {
+                "enum": [
+                  true,
+                  null
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "file_domain": {
+      "type": "object",
+      "required": [
+        "domain",
+        "status",
+        "stages",
+        "finding_count",
+        "signal_count",
+        "reason_codes"
+      ],
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/domain"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "stages": {
+          "$ref": "#/$defs/stages"
+        },
+        "finding_count": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "signal_count": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reason_codes"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "finding_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "signal_count": {
+                    "type": "null"
+                  },
+                  "reason_codes": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "finding_count": {
+                    "type": "null"
+                  },
+                  "signal_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "reason_codes": {
+                    "maxItems": 0
+                  }
+                }
+              }
+            ]
+          },
+          "else": {
+            "properties": {
+              "finding_count": {
+                "type": "null"
+              },
+              "signal_count": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "domain": {
+                "enum": [
+                  "secrets",
+                  "dangerous_primitives",
+                  "configuration"
+                ]
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          },
+          "then": {
+            "properties": {
+              "signal_count": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "finding_count": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "stages": {
+                "properties": {
+                  "selected": {
+                    "const": true
+                  },
+                  "read": {
+                    "const": true
+                  },
+                  "parsed": {
+                    "enum": [
+                      true,
+                      null
+                    ]
+                  },
+                  "evaluated": {
+                    "const": true
+                  }
+                }
+              },
+              "reason_codes": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "partial",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "stages": {
+                "properties": {
+                  "selected": {
+                    "const": true
+                  }
+                }
+              },
+              "reason_codes": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "excluded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "stages": {
+                "properties": {
+                  "selected": {
+                    "const": false
+                  },
+                  "read": {
+                    "const": false
+                  },
+                  "parsed": {
+                    "enum": [
+                      false,
+                      null
+                    ]
+                  },
+                  "evaluated": {
+                    "const": false
+                  }
+                }
+              },
+              "reason_codes": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "not_reported"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "stages": {
+                "properties": {
+                  "selected": {
+                    "const": false
+                  },
+                  "read": {
+                    "const": false
+                  },
+                  "parsed": {
+                    "enum": [
+                      false,
+                      null
+                    ]
+                  },
+                  "evaluated": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "required": [
+        "relative_path",
+        "language",
+        "domains"
+      ],
+      "properties": {
+        "relative_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+        },
+        "language": {
+          "$ref": "#/$defs/language"
+        },
+        "domains": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file_domain"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "secrets"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file_domain"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "dangerous_primitives"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file_domain"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "configuration"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file_domain"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "execution_surface"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file_domain"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "bounded_dataflow"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            }
+          ],
+          "items": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "selected",
+        "read",
+        "parsed",
+        "evaluated"
+      ],
+      "properties": {
+        "selected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parsed": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "evaluated": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "domain_summary": {
+      "type": "object",
+      "required": [
+        "domain",
+        "status",
+        "counts",
+        "finding_count",
+        "signal_count",
+        "reason_codes"
+      ],
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/domain"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "finding_count": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "signal_count": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reason_codes"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "finding_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "signal_count": {
+                    "type": "null"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "finding_count": {
+                    "type": "null"
+                  },
+                  "signal_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
+          },
+          "else": {
+            "properties": {
+              "finding_count": {
+                "type": "null"
+              },
+              "signal_count": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "domain": {
+                "enum": [
+                  "secrets",
+                  "dangerous_primitives",
+                  "configuration"
+                ]
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          },
+          "then": {
+            "properties": {
+              "signal_count": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "finding_count": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "partial",
+                  "unsupported",
+                  "excluded"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_codes": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "security_coverage": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "status",
+        "required_gate_status",
+        "inventory_files",
+        "file_records_emitted",
+        "file_records_omitted",
+        "finding_count",
+        "signal_count",
+        "reason_codes",
+        "domains",
+        "files"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "status": {
+          "$ref": "#/$defs/aggregateStatus"
+        },
+        "required_gate_status": {
+          "$ref": "#/$defs/aggregateStatus",
+          "description": "Completeness of mandatory native gate domains. bounded_dataflow is optional and does not make this status partial."
+        },
+        "inventory_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_records_emitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "file_records_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finding_count": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "signal_count": {
+          "$ref": "#/$defs/nullable_count"
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reason_codes"
+        },
+        "domains": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/domain_summary"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "secrets"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/domain_summary"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "dangerous_primitives"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/domain_summary"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "configuration"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/domain_summary"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "execution_surface"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/domain_summary"
+                },
+                {
+                  "properties": {
+                    "domain": {
+                      "const": "bounded_dataflow"
+                    }
+                  },
+                  "required": [
+                    "domain"
+                  ]
+                }
+              ]
+            }
+          ],
+          "items": false
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "finding_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "signal_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "file_records_omitted": {
+                "const": 0
+              },
+              "reason_codes": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "finding_count": {
+                "type": "null"
+              },
+              "signal_count": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "required_gate_status": {
+                "const": "complete"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

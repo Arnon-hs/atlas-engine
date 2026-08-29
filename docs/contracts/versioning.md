@@ -1,7 +1,10 @@
 # Machine contract and compatibility policy
 
-The current engine version is `0.2.0`; the legacy JSON contract remains `1.0`.
-Opt-in index snapshot events/manifests use `2.0`. Engine
+The current engine version is `0.3.0`; the legacy analyzer, finding and index
+record contracts remain `1.0`. Opt-in index snapshot events/manifests use `2.0`.
+The v0.3 security coverage, execution signal, bounded dataflow, advanced
+analysis, history, hotspot and external-evidence contracts each start at `1.0`.
+Engine
 SemVer and schema versions evolve independently. The JSON schemas in `schemas/`
 are public API, alongside field semantics in this document. SARIF follows the
 OASIS 2.1.0 schema separately.
@@ -68,3 +71,18 @@ retained records adopt the accepted target manifest's commit provenance.
 Both transaction validation and a consumer-owned compare-and-swap are required.
 See [snapshot contract](index-snapshots-v2.md) and
 [incremental design](../architecture/incremental-indexing.md).
+
+Security JSONL is a compatibility finding stream and has no coverage envelope.
+It cannot establish a complete zero-result scan. Security JSON is the canonical
+v0.3 acceptance record: every admitted file has all registered domains, each
+with explicit selected/read/parsed/evaluated stages. Finding or signal totals are
+non-null only when the corresponding domain is complete. The required native
+gate excludes only the optional bounded-dataflow enrichment; consumers must fail
+closed on partial, unsupported or not-reported required domains.
+
+Advanced analyzer fields are omitted unless explicitly requested. Missing
+structural or history measurements remain `null`; evidence labels and exact
+products must not be repurposed into percentages, probabilities or fabricated
+zeros. External-scanner evidence is passive metadata with its own identity and
+subject binding. It is not a raw-finding import, signature or proof that the
+consumer enforced its claimed sandbox.

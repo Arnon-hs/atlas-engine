@@ -10,7 +10,7 @@ use std::path::Path;
 
 use repo_core::{
     Diagnostic, ENGINE_VERSION, Language, Repository, SCHEMA_VERSION, ScanOptions, detect_secrets,
-    normalize_relative_path,
+    is_unsafe_display_char, normalize_relative_path,
 };
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -183,10 +183,7 @@ fn deserialize_chunks<'de, D: Deserializer<'de>>(
 
 fn safe_metadata(value: &str, max_bytes: usize) -> bool {
     value.len() <= max_bytes
-        && !value.chars().any(|ch| {
-            ch.is_control()
-                || matches!(ch, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-        })
+        && !value.chars().any(is_unsafe_display_char)
         && detect_secrets(value).is_empty()
 }
 

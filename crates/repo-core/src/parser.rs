@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 use tree_sitter::{Node, ParseOptions, Parser};
 
 use crate::{
-    CallSite, ImportBinding, Language, LiteralBooleanOption, ParseDiagnostic, ParsedFile,
-    SourceRange, Symbol, SymbolKind, redact_secrets,
+    CallSite, CoverageStatus, DataFlowFact, DataFlowKind, DependencyFact, DependencySyntax,
+    ImportBinding, Language, LiteralBooleanOption, ParseDiagnostic, ParsedFile, ParserProfile,
+    SourceRange, StructuralMetrics, Symbol, SymbolKind, redact_secrets,
 };
 
 const MAX_PARSE_BYTES: usize = 8 * 1024 * 1024;
@@ -14,6 +15,8 @@ const MAX_AST_NODES: usize = 250_000;
 const MAX_AST_RECORDS: usize = 16_384;
 const MAX_NAME_BYTES: usize = 512;
 const MAX_METADATA_CHILDREN: usize = 256;
+const MAX_DATAFLOW_NODES: usize = 100_000;
+const MAX_DATAFLOW_FACTS: usize = 4_096;
 
 /// Grammar selection with per-call parser ownership, suitable for a bounded
 /// Rayon pool. Trees and native parser internals never cross the domain API.
@@ -30,10 +33,62 @@ impl ParserRegistry {
         source: &str,
         max_parse_millis: u64,
     ) -> ParsedFile {
+        self.parse_with_profile(
+            ParserProfile::Legacy,
+            language,
+            relative_path,
+            source,
+            max_parse_millis,
+        )
+    }
+
+    pub fn parse_extended(
+        &self,
+        language: Language,
+        relative_path: &str,
+        source: &str,
+        max_parse_millis: u64,
+    ) -> ParsedFile {
+        self.parse_with_profile(
+            ParserProfile::Extended,
+            language,
+            relative_path,
+            source,
+            max_parse_millis,
+        )
+    }
+
+    fn parse_with_profile(
+        &self,
+        profile: ParserProfile,
+        language: Language,
+        relative_path: &str,
+        source: &str,
+        max_parse_millis: u64,
+    ) -> ParsedFile {
         let mut result = ParsedFile::default();
-        if !language.has_ast() {
+        let supported = match profile {
+            ParserProfile::Legacy => language.has_ast(),
+            ParserProfile::Extended => language.has_extended_ast(),
+        };
+        if !supported {
+            result.status = CoverageStatus::Unsupported;
+            result.dataflow_status = if profile == ParserProfile::Extended {
+                CoverageStatus::Unsupported
+            } else {
+                CoverageStatus::NotReported
+            };
             return result;
         }
+        result.status = CoverageStatus::Partial;
+        result.dataflow_status =
+            if profile == ParserProfile::Extended && language == Language::Python {
+                CoverageStatus::Partial
+            } else if profile == ParserProfile::Extended {
+                CoverageStatus::Unsupported
+            } else {
+                CoverageStatus::NotReported
+            };
         if source.len() > MAX_PARSE_BYTES || max_parse_millis == 0 {
             result.diagnostics.push(diagnostic(
                 "parse_budget",
@@ -49,6 +104,12 @@ impl ParserRegistry {
             }
             Language::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Language::Python => tree_sitter_python::LANGUAGE.into(),
+            Language::Rust if profile == ParserProfile::Extended => {
+                tree_sitter_rust::LANGUAGE.into()
+            }
+            Language::Shell if profile == ParserProfile::Extended => {
+                tree_sitter_bash::LANGUAGE.into()
+            }
             _ => return result,
         };
         let mut parser = Parser::new();
@@ -92,6 +153,12 @@ impl ParserRegistry {
         // Parse original syntax; use the identical byte coordinates from a masked
         // copy for every metadata name. Redaction does not alter the AST itself.
         let redacted = redact_secrets(source);
+        if !redacted.redaction_complete {
+            result.diagnostics.push(diagnostic(
+                "redaction_budget",
+                "Secret redaction reached its bounded scan limit; extracted semantics are partial",
+            ));
+        }
         let mut cursor = tree.walk();
         let mut scopes: Vec<(usize, SymbolKind, String)> = Vec::new();
         let mut nodes = 0;
@@ -99,12 +166,14 @@ impl ParserRegistry {
         let mut depth = 0;
         let mut semicolon_namespace = String::new();
         let mut depth_reported = false;
+        let mut metrics = StructuralMetrics::default();
+        let mut control_scopes = Vec::new();
         'walk: loop {
             let node = cursor.node();
             nodes += 1;
             if nodes > MAX_AST_NODES
                 || records >= MAX_AST_RECORDS
-                || (nodes % 64 == 0 && started.elapsed() >= budget)
+                || (nodes.is_multiple_of(64) && started.elapsed() >= budget)
             {
                 result.diagnostics.push(diagnostic(
                     "parse_budget",
@@ -113,6 +182,12 @@ impl ParserRegistry {
                 break;
             }
             if node.is_named() {
+                if is_control_flow_node(language, node.kind()) {
+                    metrics.branch_points += 1;
+                    control_scopes.push(node.id());
+                    metrics.max_control_nesting =
+                        metrics.max_control_nesting.max(control_scopes.len() as u64);
+                }
                 if let Some((kind, name, range_node)) = symbol_for(
                     language,
                     node,
@@ -134,6 +209,12 @@ impl ParserRegistry {
                     names.push(&name);
                     let qualified_name = names.join(".");
                     if qualified_name.len() <= 4096 {
+                        if matches!(
+                            kind,
+                            SymbolKind::Function | SymbolKind::Method | SymbolKind::Constructor
+                        ) {
+                            metrics.functions += 1;
+                        }
                         result.symbols.push(Symbol {
                             kind,
                             name: name.clone(),
@@ -154,8 +235,19 @@ impl ParserRegistry {
                     result.diagnostics.push(metadata_budget_diagnostic());
                     break;
                 }
-                records += imports.len();
+                let Ok(dependencies) =
+                    dependencies_for(language, node, &redacted.content, &imports)
+                else {
+                    result.diagnostics.push(metadata_budget_diagnostic());
+                    break;
+                };
+                if records + imports.len() + dependencies.len() > MAX_AST_RECORDS {
+                    result.diagnostics.push(metadata_budget_diagnostic());
+                    break;
+                }
+                records += imports.len() + dependencies.len();
                 result.imports.extend(imports);
+                result.dependencies.extend(dependencies);
                 if let Some(callee) = call_for(language, node, &redacted.content) {
                     let Ok(options) = boolean_options(language, node, &redacted.content) else {
                         result.diagnostics.push(metadata_budget_diagnostic());
@@ -191,6 +283,12 @@ impl ParserRegistry {
                 {
                     scopes.pop();
                 }
+                if control_scopes
+                    .last()
+                    .is_some_and(|node_id| *node_id == cursor.node().id())
+                {
+                    control_scopes.pop();
+                }
                 if cursor.goto_next_sibling() {
                     break;
                 }
@@ -213,8 +311,496 @@ impl ParserRegistry {
                 .cmp(&b.range.start_byte)
                 .then(a.callee.cmp(&b.callee))
         });
+        result.dependencies.sort_by(|left, right| {
+            left.range
+                .start_byte
+                .cmp(&right.range.start_byte)
+                .then(left.syntax.cmp(&right.syntax))
+                .then(left.module.cmp(&right.module))
+        });
+        result.dependencies.dedup();
+        if result.diagnostics.is_empty() {
+            result.status = CoverageStatus::Complete;
+            result.structural_metrics = Some(metrics);
+        }
+        if profile == ParserProfile::Extended && language == Language::Python {
+            let (dataflows, status) =
+                python_dataflows(tree.root_node(), &redacted.content, started, budget);
+            result.dataflows = dataflows;
+            result.dataflow_status = if result.status == CoverageStatus::Complete {
+                status
+            } else {
+                CoverageStatus::Partial
+            };
+        }
         result
     }
+}
+
+fn is_control_flow_node(language: Language, kind: &str) -> bool {
+    match language {
+        Language::Php => matches!(
+            kind,
+            "if_statement"
+                | "else_if_clause"
+                | "while_statement"
+                | "do_statement"
+                | "for_statement"
+                | "foreach_statement"
+                | "case_statement"
+                | "catch_clause"
+                | "conditional_expression"
+        ),
+        Language::JavaScript | Language::TypeScript => matches!(
+            kind,
+            "if_statement"
+                | "switch_case"
+                | "for_statement"
+                | "for_in_statement"
+                | "while_statement"
+                | "do_statement"
+                | "catch_clause"
+                | "ternary_expression"
+        ),
+        Language::Python => matches!(
+            kind,
+            "if_statement"
+                | "elif_clause"
+                | "for_statement"
+                | "while_statement"
+                | "case_clause"
+                | "except_clause"
+                | "conditional_expression"
+        ),
+        Language::Rust => matches!(
+            kind,
+            "if_expression"
+                | "match_arm"
+                | "for_expression"
+                | "while_expression"
+                | "loop_expression"
+        ),
+        Language::Shell => matches!(
+            kind,
+            "if_statement"
+                | "elif_clause"
+                | "for_statement"
+                | "c_style_for_statement"
+                | "while_statement"
+                | "case_item"
+        ),
+        _ => false,
+    }
+}
+
+#[derive(Clone)]
+struct PythonTaint {
+    source_range: SourceRange,
+    hops: u64,
+}
+
+fn python_dataflows(
+    root: Node<'_>,
+    redacted: &str,
+    started: Instant,
+    budget: Duration,
+) -> (Vec<DataFlowFact>, CoverageStatus) {
+    let mut cursor = root.walk();
+    let mut facts = Vec::new();
+    let mut nodes = 0usize;
+    let mut complete = true;
+    'walk: loop {
+        let node = cursor.node();
+        nodes += 1;
+        if nodes > MAX_DATAFLOW_NODES
+            || facts.len() >= MAX_DATAFLOW_FACTS
+            || (nodes.is_multiple_of(64) && started.elapsed() >= budget)
+        {
+            complete = false;
+            break;
+        }
+        if node.kind() == "function_definition" {
+            complete &= analyze_python_function(node, redacted, &mut facts);
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                break 'walk;
+            }
+        }
+    }
+    facts.sort_by(|left, right| {
+        left.sink_range
+            .start_byte
+            .cmp(&right.sink_range.start_byte)
+            .then(
+                left.source_range
+                    .start_byte
+                    .cmp(&right.source_range.start_byte),
+            )
+            .then(left.assignment_hops.cmp(&right.assignment_hops))
+    });
+    facts.dedup();
+    (
+        facts,
+        if complete {
+            CoverageStatus::Complete
+        } else {
+            CoverageStatus::Partial
+        },
+    )
+}
+
+fn analyze_python_function(
+    function: Node<'_>,
+    redacted: &str,
+    facts: &mut Vec<DataFlowFact>,
+) -> bool {
+    let Some(parameters) = function.child_by_field_name("parameters") else {
+        return false;
+    };
+    let Some(body) = function.child_by_field_name("body") else {
+        return false;
+    };
+    let Ok(parameters) = metadata_children(parameters) else {
+        return false;
+    };
+    let mut tainted = BTreeMap::<String, PythonTaint>::new();
+    let mut complete = true;
+    for parameter in parameters {
+        match python_parameter_identifier(parameter) {
+            Some(identifier) => {
+                let Some(name) = name_text(identifier, redacted) else {
+                    complete = false;
+                    continue;
+                };
+                if tainted.len() >= 128 {
+                    return false;
+                }
+                tainted.insert(
+                    name,
+                    PythonTaint {
+                        source_range: range(identifier),
+                        hops: 0,
+                    },
+                );
+            }
+            None if !matches!(
+                parameter.kind(),
+                "keyword_separator" | "positional_separator"
+            ) =>
+            {
+                complete = false;
+            }
+            None => {}
+        }
+    }
+    let Ok(statements) = metadata_children(body) else {
+        return false;
+    };
+    for statement in statements {
+        if facts.len() >= MAX_DATAFLOW_FACTS {
+            return false;
+        }
+        match statement.kind() {
+            "expression_statement" => {
+                let Some(expression) = statement.named_child(0) else {
+                    complete = false;
+                    continue;
+                };
+                match expression.kind() {
+                    "assignment" => {
+                        let Some(left) = expression.child_by_field_name("left") else {
+                            complete = false;
+                            continue;
+                        };
+                        let Some(right) = expression.child_by_field_name("right") else {
+                            complete = false;
+                            continue;
+                        };
+                        complete &=
+                            record_python_sinks_in_expression(right, redacted, &tainted, facts);
+                        if left.kind() != "identifier" {
+                            complete = false;
+                            continue;
+                        }
+                        let Some(name) = name_text(left, redacted) else {
+                            complete = false;
+                            continue;
+                        };
+                        if let Some(mut value) =
+                            python_taint_expression(right, redacted, &tainted, 0)
+                        {
+                            value.hops = value.hops.saturating_add(1);
+                            if value.hops > 8
+                                || (tainted.len() >= 128 && !tainted.contains_key(&name))
+                            {
+                                complete = false;
+                            } else {
+                                tainted.insert(name, value);
+                            }
+                        } else {
+                            if python_expression_mentions_taint(right, redacted, &tainted) {
+                                complete = false;
+                            }
+                            tainted.remove(&name);
+                        }
+                    }
+                    "call" => {
+                        complete &= record_python_sinks_in_expression(
+                            expression, redacted, &tainted, facts,
+                        );
+                    }
+                    "identifier" | "string" | "integer" | "float" | "none" | "true" | "false" => {}
+                    _ => complete = false,
+                }
+            }
+            "return_statement" => {
+                if let Some(expression) = statement.named_child(0) {
+                    complete &=
+                        record_python_sinks_in_expression(expression, redacted, &tainted, facts);
+                }
+            }
+            "pass_statement"
+            | "import_statement"
+            | "import_from_statement"
+            | "global_statement"
+            | "nonlocal_statement"
+            | "future_import_statement" => {}
+            // Nested definitions are evaluated separately and do not share the
+            // outer function's local taint model.
+            "function_definition" | "class_definition" | "decorated_definition" => {}
+            _ => complete = false,
+        }
+    }
+    complete
+}
+
+/// Inspect every call evaluated by a supported expression. This deliberately
+/// walks nested calls: treating only the outer call as modeled would let
+/// `wrapper(eval(parameter))` become a false complete zero. An uninspectable
+/// call or traversal limit fails the enclosing function to partial coverage.
+fn record_python_sinks_in_expression(
+    root: Node<'_>,
+    redacted: &str,
+    tainted: &BTreeMap<String, PythonTaint>,
+    facts: &mut Vec<DataFlowFact>,
+) -> bool {
+    let mut cursor = root.walk();
+    let mut visited = 0usize;
+    loop {
+        let node = cursor.node();
+        visited += 1;
+        if visited > 1_024 || facts.len() >= MAX_DATAFLOW_FACTS {
+            return false;
+        }
+        if node.kind() == "call" && !record_python_sink(node, redacted, tainted, facts) {
+            return false;
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return true;
+            }
+        }
+    }
+}
+
+fn python_parameter_identifier(node: Node<'_>) -> Option<Node<'_>> {
+    match node.kind() {
+        "identifier" => Some(node),
+        "default_parameter" | "typed_default_parameter" => node.child_by_field_name("name"),
+        "typed_parameter" | "list_splat_pattern" | "dictionary_splat_pattern" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .find(|child| child.kind() == "identifier")
+        }
+        _ => None,
+    }
+}
+
+fn python_taint_expression(
+    node: Node<'_>,
+    redacted: &str,
+    tainted: &BTreeMap<String, PythonTaint>,
+    depth: usize,
+) -> Option<PythonTaint> {
+    if depth > 16 {
+        return None;
+    }
+    match node.kind() {
+        "identifier" => tainted.get(&name_text(node, redacted)?).cloned(),
+        "parenthesized_expression" => {
+            python_taint_expression(node.named_child(0)?, redacted, tainted, depth + 1)
+        }
+        "binary_operator" => {
+            let left = node
+                .child_by_field_name("left")
+                .and_then(|child| python_taint_expression(child, redacted, tainted, depth + 1));
+            let right = node
+                .child_by_field_name("right")
+                .and_then(|child| python_taint_expression(child, redacted, tainted, depth + 1));
+            merge_python_taint(left, right)
+        }
+        // Unknown transforms are not treated as sanitizers. Propagate taint from
+        // any explicit argument and count the transform as one additional hop.
+        "call" => {
+            let arguments = node.child_by_field_name("arguments")?;
+            let children = metadata_children(arguments).ok()?;
+            let mut value = None;
+            for child in children {
+                let argument = if child.kind() == "keyword_argument" {
+                    child.child_by_field_name("value")?
+                } else {
+                    child
+                };
+                value = merge_python_taint(
+                    value,
+                    python_taint_expression(argument, redacted, tainted, depth + 1),
+                );
+            }
+            value.map(|mut value| {
+                value.hops = value.hops.saturating_add(1);
+                value
+            })
+        }
+        _ => None,
+    }
+}
+
+fn merge_python_taint(
+    left: Option<PythonTaint>,
+    right: Option<PythonTaint>,
+) -> Option<PythonTaint> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(
+            if (left.hops, left.source_range.start_byte)
+                <= (right.hops, right.source_range.start_byte)
+            {
+                left
+            } else {
+                right
+            },
+        ),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn record_python_sink(
+    call: Node<'_>,
+    redacted: &str,
+    tainted: &BTreeMap<String, PythonTaint>,
+    facts: &mut Vec<DataFlowFact>,
+) -> bool {
+    let Some(callee_name) = call
+        .child_by_field_name("function")
+        .and_then(|node| callee(node, redacted, 0))
+    else {
+        return false;
+    };
+    let kind = if matches!(
+        callee_name.as_str(),
+        "eval" | "exec" | "builtins.eval" | "builtins.exec"
+    ) {
+        DataFlowKind::PythonParameterToDynamicEvaluation
+    } else if matches!(
+        callee_name.as_str(),
+        "subprocess.run"
+            | "subprocess.call"
+            | "subprocess.Popen"
+            | "subprocess.check_call"
+            | "subprocess.check_output"
+    ) && python_shell_true(call, redacted)
+    {
+        DataFlowKind::PythonParameterToShellExecution
+    } else {
+        return true;
+    };
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let Ok(arguments) = metadata_children(arguments) else {
+        return false;
+    };
+    let Some(argument) = arguments.into_iter().find(|argument| {
+        !matches!(
+            argument.kind(),
+            "keyword_argument" | "list_splat" | "dictionary_splat"
+        )
+    }) else {
+        return true;
+    };
+    if let Some(value) = python_taint_expression(argument, redacted, tainted, 0) {
+        facts.push(DataFlowFact {
+            kind,
+            source_range: value.source_range,
+            sink_range: range(call),
+            assignment_hops: value.hops,
+        });
+    } else if python_expression_mentions_taint(argument, redacted, tainted) {
+        return false;
+    }
+    true
+}
+
+fn python_expression_mentions_taint(
+    root: Node<'_>,
+    redacted: &str,
+    tainted: &BTreeMap<String, PythonTaint>,
+) -> bool {
+    let mut cursor = root.walk();
+    let mut visited = 0usize;
+    loop {
+        let node = cursor.node();
+        visited += 1;
+        if visited > 1_024 {
+            return true;
+        }
+        if node.kind() == "identifier"
+            && name_text(node, redacted).is_some_and(|name| tainted.contains_key(&name))
+        {
+            return true;
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return false;
+            }
+        }
+    }
+}
+
+fn python_shell_true(call: Node<'_>, redacted: &str) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let Ok(arguments) = metadata_children(arguments) else {
+        return false;
+    };
+    arguments.into_iter().any(|argument| {
+        argument.kind() == "keyword_argument"
+            && argument
+                .child_by_field_name("name")
+                .and_then(|name| name_text(name, redacted))
+                .is_some_and(|name| name == "shell")
+            && argument.child_by_field_name("value").and_then(literal_bool) == Some(true)
+    })
 }
 
 fn metadata_budget_diagnostic() -> ParseDiagnostic {
@@ -406,6 +992,88 @@ fn require_module(node: Node<'_>, redacted: &str) -> Result<Option<String>, ()> 
     } else {
         None
     })
+}
+
+fn dependencies_for(
+    language: Language,
+    node: Node<'_>,
+    redacted: &str,
+    imports: &[ImportBinding],
+) -> Result<Vec<DependencyFact>, ()> {
+    if node.has_error() {
+        return Ok(Vec::new());
+    }
+    let mut dependencies = Vec::new();
+    match (language, node.kind()) {
+        (Language::Python, "import_statement" | "import_from_statement") => {
+            let mut modules = imports
+                .iter()
+                .map(|binding| {
+                    if binding.module.bytes().all(|byte| byte == b'.') {
+                        binding.imported_name.as_ref().map_or_else(
+                            || binding.module.clone(),
+                            |name| format!("{}{name}", binding.module),
+                        )
+                    } else {
+                        binding.module.clone()
+                    }
+                })
+                .collect::<Vec<_>>();
+            modules.sort();
+            modules.dedup();
+            dependencies.extend(modules.into_iter().map(|module| DependencyFact {
+                syntax: DependencySyntax::StaticImport,
+                module: Some(module),
+                range: range(node),
+            }));
+        }
+        (Language::JavaScript | Language::TypeScript, "import_statement") => {
+            let mut module = node
+                .child_by_field_name("source")
+                .and_then(|source| plain_string(source, redacted));
+            if module.is_none() {
+                module = metadata_children(node)?
+                    .into_iter()
+                    .find(|child| child.kind() == "import_require_clause")
+                    .and_then(|clause| clause.child_by_field_name("source"))
+                    .and_then(|source| plain_string(source, redacted));
+            }
+            if let Some(module) = module {
+                dependencies.push(DependencyFact {
+                    syntax: DependencySyntax::StaticImport,
+                    module: Some(module),
+                    range: range(node),
+                });
+            }
+        }
+        (Language::JavaScript | Language::TypeScript, "call_expression") => {
+            let Some(function) = node.child_by_field_name("function") else {
+                return Ok(dependencies);
+            };
+            if function.kind() == "import" {
+                dependencies.push(DependencyFact {
+                    syntax: DependencySyntax::DynamicImport,
+                    module: None,
+                    range: range(node),
+                });
+            } else if function.kind() == "identifier"
+                && name_text(function, redacted).as_deref() == Some("require")
+            {
+                let module = require_module(node, redacted)?;
+                dependencies.push(DependencyFact {
+                    syntax: if module.is_some() {
+                        DependencySyntax::StaticImport
+                    } else {
+                        DependencySyntax::DynamicImport
+                    },
+                    module,
+                    range: range(node),
+                });
+            }
+        }
+        _ => {}
+    }
+    Ok(dependencies)
 }
 
 fn imports_for(
@@ -664,6 +1332,24 @@ fn symbol_for<'a>(
         (_, "function_declaration" | "generator_function_declaration" | "function_signature") => {
             SymbolKind::Function
         }
+        (Language::Rust, "function_item") => {
+            let mut ancestor = node.parent();
+            let mut in_impl = false;
+            for _ in 0..3 {
+                let Some(parent) = ancestor else { break };
+                if parent.kind() == "impl_item" {
+                    in_impl = true;
+                    break;
+                }
+                ancestor = parent.parent();
+            }
+            if in_impl {
+                SymbolKind::Method
+            } else {
+                SymbolKind::Function
+            }
+        }
+        (Language::Shell, "function_definition") => SymbolKind::Function,
         (Language::Php | Language::Python, "function_definition") => {
             if language == Language::Python && enclosing == Some(SymbolKind::Class) {
                 SymbolKind::Method
@@ -776,6 +1462,10 @@ fn call_for(language: Language, node: Node<'_>, redacted: &str) -> Option<String
             callee(node.child_by_field_name("constructor")?, redacted, 0)
         }
         (Language::Php, "shell_command_expression") => Some("shell_exec".into()),
+        (Language::Rust, "call_expression") => {
+            callee(node.child_by_field_name("function")?, redacted, 0)
+        }
+        (Language::Shell, "command") => callee(node.child_by_field_name("name")?, redacted, 0),
         _ => None,
     }
 }

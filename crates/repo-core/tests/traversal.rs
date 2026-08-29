@@ -413,7 +413,21 @@ fn classification_and_path_model_are_portable() {
         normalize_relative_path(Path::new("./a/./b.py")).unwrap(),
         "a/b.py"
     );
-    for bad in ["", ".", "..", "a/../b", "/root/file", "a\\b", "C:/file"] {
+    for bad in [
+        "",
+        ".",
+        "..",
+        "a/../b",
+        "/root/file",
+        "a\\b",
+        "C:/file",
+        "control\u{1b}.py",
+        "newline\n.py",
+        "bidi\u{202e}.py",
+        "isolate\u{2066}.py",
+        "line\u{2028}separator.py",
+        "paragraph\u{2029}separator.py",
+    ] {
         assert!(normalize_relative_path(Path::new(bad)).is_err(), "{bad}");
     }
     assert!(

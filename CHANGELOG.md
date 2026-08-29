@@ -3,7 +3,30 @@
 Changes use [Semantic Versioning](https://semver.org/). JSON schema major versions
 are independent and follow [contract policy](docs/contracts/versioning.md).
 
-## Unreleased — 0.2.0
+## Unreleased — 0.3.0
+
+- Add machine-readable security coverage for every admitted file and five rule
+  domains, including independent selected/read/parsed/evaluated stages and
+  nullable totals when analysis is incomplete, unsupported or excluded.
+- Add a fixed-vocabulary execution-surface inventory for lifecycle hooks, Cargo
+  build surfaces, Actions triggers/permissions/mutable refs, Docker execution and
+  privilege settings, literal TLS disablement and typed dangerous primitives.
+- Add opt-in, bounded Python parameter-to-`eval`/shell flow facts without source
+  text or identifiers; exceeding a modeling limit produces partial coverage.
+- Add opt-in Rust and Shell grammars, explicit syntax metrics, `resolved`
+  static local-import observations, redacted `dynamic_unresolved` observations
+  and evidence-labelled test-to-source mapping.
+- Add strict caller-supplied history manifests and checked decision-count ×
+  commit-count hotspot products; missing measurements remain null.
+- Add a passive external-scanner evidence manifest and CLI validation against an
+  accepted snapshot, with streaming SHA-256 verification of every declared
+  present private result artifact. Atlas Engine still runs no scanner or
+  repository process.
+- Document safe consumer profiles for zizmor, actionlint, Gitleaks, OSV-Scanner
+  and separately executed Opengrep. Keep `MIT OR Apache-2.0`; no scanner is bundled.
+- Add offline zizmor CI and Dependabot cooldowns that do not delay security updates.
+
+## 0.2.0 source baseline — no published release
 
 - Opt-in `index --format events-jsonl` with complete, bounded snapshot manifests,
   unchanged-record detection and deterministic `chunk.upsert`/`chunk.delete` events.
@@ -27,7 +50,7 @@ are independent and follow [contract policy](docs/contracts/versioning.md).
 - OSS policy files, dependency checks, Linux/macOS CI, CodeQL, Scorecard, and
   four-target release/SBOM/attestation preparation.
 
-This section describes the source implementation, not a published or independently
+These sections describe source implementations, not published or independently
 audited release. Before publication, replace it with a dated release entry,
 review changes and security fixes, link advisories where applicable, and record
 the exact source revision and supported platforms.

@@ -7,7 +7,8 @@ the caller's isolated worker are trusted. The engine is not an OS sandbox.
 Assets include host filesystem confidentiality/integrity, process resources,
 source secrets, truthful output provenance, downstream indexes, CI credentials,
 and release integrity. Entry points are the root path, filenames, file contents,
-ignore/Git metadata, CLI options, parser libraries and consumer streams.
+ignore/Git metadata, CLI options, caller-supplied history/evidence/snapshot files,
+private result-artifact paths, parser libraries and consumer streams.
 
 ```mermaid
 flowchart LR
@@ -40,10 +41,10 @@ flowchart LR
 | Ignore manipulation or parent configuration influence | Scoped ignore matcher, policy/source diagnostics, bounded metadata; tracked index membership overrides VCS ignores | Engine/user exclusions still win. Ignored/unreadable/skipped content is not scanned |
 | Secrets in source or metadata | Shared high-confidence detector; full-file redaction before chunking; no full secret in security findings | False negatives and personal/private data remain possible; output is not automatically publishable |
 | Secret fingerprint dictionary attacks | Index hashes are of emitted redacted content, not hidden secret bytes | Core source hashes can expose low-entropy equality; restrict access and avoid unnecessary publication |
-| Terminal escapes and bidi filenames | CLI `safe_text`, limited output and escaped controls; `hostile_filenames_cannot_inject_json_sarif_or_terminal_escape_sequences` | Do not render raw consumer stderr/source as terminal control data |
+| Terminal escapes, Unicode line separators and bidi filenames | Shared unsafe-display path predicate, CLI `safe_text`, limited output and escaped controls; hostile filename and U+2028/U+2029 regressions | Do not render raw consumer stderr/source as terminal control data |
 | JSON/SARIF injection or unsafe URIs | Serde escaping, relative path/URI handling and validation against local schemas | Serialization does not make data safe as HTML, shell syntax, or filesystem destinations |
 | Truncated/failed stream poisons index | Node consumer stages records and requires validated EOF plus exit 0; timeout/error tests | Exit 0 alone does not prove coverage; caller must evaluate diagnostics and acquisition state |
-| Resource exhaustion passes a security gate without findings | `truncated` reports lost coverage; an explicit `--fail-on` gate exits 6 on incomplete input/parser/reporting results | Intentional exclusions remain outside the selected scope; detection is heuristic, not proof of absence |
+| Resource exhaustion passes a security gate without findings | `truncated` reports lost required-domain coverage; an explicit `--fail-on` gate exits 6 on incomplete input/parser/reporting results | Optional bounded dataflow and intentional exclusions do not decide the required gate; detection is heuristic, not proof of absence |
 | Dependency compromise | Locked dependencies, source/license/advisory policy, pinned actions, CodeQL preparation | A lockfile and scanner cannot prove supply-chain safety; review build scripts, native code and updates |
 | CI token compromise from PRs | Hosted unprivileged build/CodeQL jobs, no `pull_request_target`, no persisted checkout credentials; separate upload job | Owner must enforce permissions, trusted workflow review and branch rules |
 | Release compromise | Native build jobs without write/OIDC, separate environment-gated attestation/draft job, tag validation, checksum set | Owner must enable approvals/tag rules, verify source/run/artifact identity and publish deliberately |
@@ -55,7 +56,9 @@ loose refs and bounded packed refs. Index membership uses structurally recognize
 v2/v3 SHA-1 layouts; unsupported v4/split/sparse/corrupt forms yield unknown
 tracking. Membership is advisory and is not proof that a file was committed in
 HEAD, that its content is unchanged, or that a directory is a clean clone.
-Git history/churn, complexity and data-flow are not fabricated from these fields.
+Git history/churn is not fabricated from these fields. Opt-in complexity and
+bounded dataflow come only from their documented parser coverage; missing or
+unsupported measurements remain null/partial rather than inferred from Git.
 
 ## Verification and review status
 
@@ -92,3 +95,24 @@ upgrade observed Git HEAD into verified acquisition or source immutability.
 The v2 schema and library tests cover local protocol behavior. They do not
 certify a consumer database transaction, OS sandbox, Git ancestry, a fuzz
 campaign or a published release. The Node example remains a v1 consumer.
+
+## v0.3 coverage and external-evidence boundary
+
+Security capabilities and bounded flows are typed observations, not confirmed
+vulnerabilities. Complete zero totals exist only inside complete coverage
+domains; legacy finding arrays/maps remain lower-bound observations on partial
+scans.
+
+| Threat | v0.3 control | Residual requirement |
+| --- | --- | --- |
+| Unsupported/malformed/budget-limited analysis becomes a clean zero | Per-file/per-domain status plus selected/read/parsed/evaluated stages; counts null unless complete; explicit required-gate status | Consumer must require the coverage envelope from engine 0.3+ and fail closed on incomplete required domains |
+| Malicious history manifest fabricates churn | 16 MiB/100,000-entry strict JSON, portable sorted unique paths, nullable metrics, canonical BLAKE3 identity and exact repository/target/configuration binding | Producer/channel authentication and immutable acquisition; Atlas does not prove base reachability, ancestry, rename policy or count derivation |
+| Malicious external evidence claims a completed tool | 1 MiB strict metadata, exact binary/material digests, scope/stage/status/result invariants and snapshot/configuration/selection binding | Consumer authenticates the runner and retains natural sandbox/tool evidence; a canonical ID proves consistency only |
+| Symlink/FIFO/device or in-repository evidence/history/result input | Parent capability pinning, final nofollow/nonblocking ordinary-file checks, outside-repository requirement, byte/stability bounds | Hardlink/mount aliases remain caller-controlled; state directories must be trusted and isolated |
+| Raw scanner result leaks source, secrets or absolute paths | Evidence schema has no raw findings/messages/snippets/commands/paths; optional result file is streamed only for SHA-256/size and never parsed or emitted | Private result store access/redaction/retention remains the consumer's responsibility |
+| Repository-controlled scanner/rules/database executes code | Atlas never starts scanners, fetches materials or reads target-controlled rules; documented external profiles disable network and repository execution | Consumer-owned sandbox and exact pinned tool/material provenance; tool-specific residual execution/licensing review |
+
+External evidence with `incomplete` or `failed` status can be valid metadata and
+therefore pass the `evidence` validator. It must still fail a consumer security
+acceptance gate. Atlas Engine does not treat a self-consistent manifest as an
+attestation or proof that network/credentials/repository execution were denied.

@@ -1,8 +1,8 @@
 # Release, SBOM and provenance
 
 Status: prepared workflow and tooling, no published artifacts, successful hosted
-release run, badge or SLSA level claimed. Current source version: `0.2.0`;
-neither the v0.1 baseline nor v0.2 is claimed as a published binary release.
+release run, badge or SLSA level claimed. Current source version: `0.3.0`;
+none of the v0.1, v0.2 or v0.3 source baselines is claimed as a published binary release.
 Publication requires explicit owner authorization and verified GitHub settings.
 
 ## Before tagging
@@ -84,7 +84,7 @@ Checksums alone detect corruption, not a substituted release. Verify the hosted
 identity and subject digest with GitHub CLI:
 
 ```bash
-gh attestation verify atlas-engine-v0.2.0-aarch64-apple-darwin.tar.gz \
+gh attestation verify atlas-engine-v0.3.0-aarch64-apple-darwin.tar.gz \
   --repo Arnon-hs/atlas-engine \
   --signer-workflow Arnon-hs/atlas-engine/.github/workflows/release.yml \
   --deny-self-hosted-runners

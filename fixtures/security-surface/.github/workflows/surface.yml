@@ -1,0 +1,10 @@
+name: Synthetic surface fixture
+on: push
+permissions: read-all
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "FIXTURE_ONLY_DO_NOT_EXECUTE"

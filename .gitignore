@@ -2,6 +2,10 @@
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/corpus/**
+!/fuzz/corpus/history_manifest/
+!/fuzz/corpus/history_manifest/valid.json
+!/fuzz/corpus/external_evidence/
+!/fuzz/corpus/external_evidence/valid.json
 !/fuzz/corpus/**/
 !/fuzz/corpus/file_classification/utf8.py
 !/fuzz/corpus/secret_detector/fake-key.txt

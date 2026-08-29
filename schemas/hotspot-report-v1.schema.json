@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/hotspot-report-v1.schema.json",
+  "title": "Atlas Engine decision count by caller-supplied commit count hotspots v1",
+  "description": "The checked integer product is a review-prioritization fact, not a vulnerability probability or normalized score. A null total means the ranking is incomplete.",
+  "type": "object",
+  "required": ["schema_version", "status", "hotspot_count", "hotspots"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "partial"]
+    },
+    "hotspot_count": { "type": ["integer", "null"], "minimum": 0 },
+    "hotspots": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "required": [
+          "relative_path",
+          "branch_points",
+          "commit_count",
+          "decision_commit_product"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+          },
+          "branch_points": { "type": "integer", "minimum": 0 },
+          "commit_count": { "type": "integer", "minimum": 0 },
+          "decision_commit_product": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "complete" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": { "hotspot_count": { "type": "integer", "minimum": 0 } }
+      },
+      "else": {
+        "properties": { "hotspot_count": { "type": "null" } }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

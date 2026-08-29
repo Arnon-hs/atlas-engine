@@ -26,6 +26,7 @@ an additional check, not the only SAST evidence.
 | [github/codeql-action](https://github.com/github/codeql-action/releases/tag/v4.37.9) | v4.37.9 | `cdf488f595d80d6e07e03d4674febd5ab45fa938` |
 | [ossf/scorecard-action](https://github.com/ossf/scorecard-action/releases/tag/v2.4.4) | v2.4.4 | `2d1146689b8cda280b9bc96326124645441f03bc` |
 | [actions/attest](https://github.com/actions/attest/releases/tag/v4.2.2) | v4.2.2 | `1e69f48acb82d1966a394da916b4c1698aa569d6` |
+| [zizmorcore/zizmor-action](https://github.com/zizmorcore/zizmor-action/releases/tag/v0.6.2) | v0.6.2 | `3dc1ecc9bcb9e94e9b2c709687979e1298497054` |
 
 Pins were resolved using `gh api repos/OWNER/REPO/commits/VERSION --jq .sha`,
 not guessed from familiar major tags. Dependabot can propose reviewed updates;
@@ -60,6 +61,11 @@ results, independent security review, package publication or release approval.
 - Official `actionlint` v1.7.12 accepted all four workflows. Its Darwin arm64
   archive SHA-256 was checked against the upstream release checksum file:
   `aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f`.
+- `zizmor` v1.29.0 inspected `.github/` offline and reported no finding; the
+  same scope also produced no finding with ignores disabled. Hostile workflow
+  files under `fixtures/` are scanner inputs, not project automation, and are
+  deliberately outside that workflow audit scope. This is local static review,
+  not hosted execution or proof of repository settings.
 - `python3 scripts/check_repository.py` checked local documentation links,
   license copies, Action pins and vendored-source identities; all eight Python
   release identity/SAST policy regression tests passed, including incomplete
@@ -75,7 +81,7 @@ results, independent security review, package publication or release approval.
   source with its reviewed lock. An offline macOS arm64 invocation generated a
   CycloneDX 1.5 document with 80 components and left engine Cargo.lock unchanged.
 - The license collector produced inventories for all four planned targets:
-  Linux x86_64 80 dependencies, Linux arm64 79, macOS arm64 76, macOS x86_64 77.
+  Linux x86_64 90 dependencies, Linux arm64 89, macOS arm64 86, macOS x86_64 87.
   Each had upstream notice files; none contained the fuzz-only libfuzzer dependency.
 - All 65 published requirement IDs from OSPS Baseline v2026.02.19 are mapped
   in the [readiness matrix](openssf-osps-baseline.md), including retired controls.

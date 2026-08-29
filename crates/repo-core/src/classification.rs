@@ -2,6 +2,19 @@ use std::path::{Component, Path};
 
 use crate::{CoreError, FileClassification, Language, detect_secrets};
 
+/// Characters that can split, reorder, or control terminal and log output.
+pub fn is_unsafe_display_char(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 /// Portable paths are UTF-8, relative, slash-separated and cannot traverse upwards.
 /// Backslash is rejected on every platform to avoid Windows reinterpretation.
 pub fn normalize_relative_path(path: &Path) -> Result<String, CoreError> {
@@ -9,7 +22,7 @@ pub fn normalize_relative_path(path: &Path) -> Result<String, CoreError> {
     let raw = path.to_str().ok_or_else(invalid)?;
     if raw.len() > 4096
         || raw.contains('\\')
-        || raw.contains('\0')
+        || raw.chars().any(is_unsafe_display_char)
         || !detect_secrets(raw).is_empty()
     {
         return Err(invalid());

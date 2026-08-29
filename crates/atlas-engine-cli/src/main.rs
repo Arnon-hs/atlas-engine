@@ -2,7 +2,9 @@
 //! exclusively on stderr. The scanned repository never becomes executable input.
 #![forbid(unsafe_code)]
 
-use std::io::{self, BufWriter, Write};
+mod external_input;
+
+use std::io::{self, BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -35,14 +37,28 @@ enum Command {
         #[command(flatten)]
         scan: ScanArgs,
         #[arg(long, value_enum, default_value = "human")]
-        format: Format,
+        format: HumanJsonFormat,
+        /// Enable bounded grammar, structural metric, dependency and test mapping domains.
+        #[arg(long)]
+        advanced: bool,
+        /// Consumer-produced bounded Git history manifest outside the repository.
+        #[arg(
+            long,
+            value_name = "HISTORY_JSON",
+            requires = "advanced",
+            requires = "accepted_snapshot"
+        )]
+        history_manifest: Option<PathBuf>,
+        /// Independently accepted complete snapshot that binds history to this selection.
+        #[arg(long, value_name = "SNAPSHOT_JSON", requires = "history_manifest")]
+        accepted_snapshot: Option<PathBuf>,
     },
     /// AST-aware chunks with mandatory high-confidence secret redaction.
     Index {
         #[command(flatten)]
         scan: ScanArgs,
         #[arg(long, value_enum, default_value = "jsonl")]
-        format: Format,
+        format: IndexFormat,
         /// Maximum UTF-8 content bytes per chunk; oversized symbols are subdivided.
         #[arg(long, default_value_t = 16_384)]
         max_chunk_bytes: usize,
@@ -55,32 +71,101 @@ enum Command {
         #[command(flatten)]
         scan: ScanArgs,
         #[arg(long, value_enum, default_value = "human")]
-        format: Format,
+        format: SecurityFormat,
         /// Exit 5 at this threshold, or 6 if scan coverage is incomplete.
         #[arg(long, value_enum)]
         fail_on: Option<FailureThreshold>,
+    },
+    /// Validate passive external-scanner evidence against an accepted snapshot.
+    Evidence {
+        /// Consumer-produced evidence manifest outside the repository.
+        manifest: PathBuf,
+        /// Complete accepted Atlas snapshot manifest outside the repository.
+        #[arg(long, value_name = "SNAPSHOT_JSON")]
+        against: PathBuf,
+        /// Scanned repository root, used only to reject in-repository evidence files.
+        #[arg(long, value_name = "PATH")]
+        repository_root: PathBuf,
+        /// Private result artifact to hash without parsing; required when result is present.
+        #[arg(long, value_name = "RESULT")]
+        result: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "human")]
+        format: HumanJsonFormat,
     },
     /// Inspect input, skip diagnostics and effective safety limits without execution.
     Doctor {
         #[command(flatten)]
         scan: ScanArgs,
         #[arg(long, value_enum, default_value = "human")]
-        format: Format,
+        format: HumanJsonFormat,
     },
     /// Print engine and public schema versions.
     Version {
         #[arg(long, value_enum, default_value = "human")]
-        format: Format,
+        format: HumanJsonFormat,
     },
 }
 
-#[derive(Clone, Copy, ValueEnum, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Format {
     Human,
     Json,
     Jsonl,
     EventsJsonl,
     Sarif,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum HumanJsonFormat {
+    Human,
+    Json,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum IndexFormat {
+    Human,
+    Json,
+    Jsonl,
+    EventsJsonl,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SecurityFormat {
+    Human,
+    Json,
+    Jsonl,
+    Sarif,
+}
+
+impl From<HumanJsonFormat> for Format {
+    fn from(value: HumanJsonFormat) -> Self {
+        match value {
+            HumanJsonFormat::Human => Self::Human,
+            HumanJsonFormat::Json => Self::Json,
+        }
+    }
+}
+
+impl From<IndexFormat> for Format {
+    fn from(value: IndexFormat) -> Self {
+        match value {
+            IndexFormat::Human => Self::Human,
+            IndexFormat::Json => Self::Json,
+            IndexFormat::Jsonl => Self::Jsonl,
+            IndexFormat::EventsJsonl => Self::EventsJsonl,
+        }
+    }
+}
+
+impl From<SecurityFormat> for Format {
+    fn from(value: SecurityFormat) -> Self {
+        match value {
+            SecurityFormat::Human => Self::Human,
+            SecurityFormat::Json => Self::Json,
+            SecurityFormat::Jsonl => Self::Jsonl,
+            SecurityFormat::Sarif => Self::Sarif,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -210,14 +295,49 @@ fn run(cli: Cli) -> Result<u8, Failure> {
     let mut output = BufWriter::new(io::stdout().lock());
     let mut exit_code = 0;
     match cli.command {
-        Command::Analyze { scan, format } => {
-            require_format(
-                format,
-                &[Format::Human, Format::Json],
-                "analyze supports human or json",
-            )?;
+        Command::Analyze {
+            scan,
+            format,
+            advanced,
+            history_manifest,
+            accepted_snapshot,
+        } => {
+            let format = Format::from(format);
+            let repository_root = scan.path.clone();
             let repository = scan.open()?;
-            let report = repo_analyzer::analyze(&repository).context("analysis failed")?;
+            let mut report = repo_analyzer::analyze(&repository).context("analysis failed")?;
+            if advanced {
+                let advanced_report = repo_analyzer::analyze_advanced(&repository)
+                    .context("advanced analysis failed")?;
+                if let (Some(history_path), Some(snapshot_path)) =
+                    (history_manifest.as_deref(), accepted_snapshot.as_deref())
+                {
+                    let snapshot = read_external_snapshot(snapshot_path, &repository_root)?;
+                    validate_snapshot_binding(&repository, &snapshot)?;
+                    let history = read_external_history(history_path, &repository_root)?;
+                    let target_commit = snapshot.commit_sha.as_deref().ok_or_else(|| Failure {
+                        code: 3,
+                        message: "accepted snapshot has no commit identity for history binding"
+                            .into(),
+                    })?;
+                    let binding = repo_analyzer::HistoryBinding {
+                        repository_id: &snapshot.repository_id,
+                        target_commit_sha: target_commit,
+                        configuration_id: &snapshot.configuration_id,
+                    };
+                    report.hotspots = Some(
+                        repo_analyzer::decision_commit_hotspots(
+                            &history,
+                            binding,
+                            advanced_report.complexity_status,
+                            &advanced_report.files,
+                        )
+                        .map_err(history_failure)?,
+                    );
+                }
+                emit_diagnostics(&advanced_report.diagnostics);
+                report.advanced = Some(advanced_report);
+            }
             emit_diagnostics(&report.diagnostics);
             if format == Format::Json {
                 write_json(&mut output, &report)?;
@@ -231,16 +351,7 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             max_chunk_bytes,
             since,
         } => {
-            require_format(
-                format,
-                &[
-                    Format::Human,
-                    Format::Json,
-                    Format::Jsonl,
-                    Format::EventsJsonl,
-                ],
-                "index supports human, json, jsonl or events-jsonl",
-            )?;
+            let format = Format::from(format);
             if since.is_some() && format != Format::EventsJsonl {
                 return Err(Failure {
                     code: 2,
@@ -312,15 +423,11 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             format,
             fail_on,
         } => {
-            require_format(
-                format,
-                &[Format::Human, Format::Json, Format::Jsonl, Format::Sarif],
-                "security supports human, json, jsonl or sarif",
-            )?;
+            let format = Format::from(format);
             let repository = scan.open()?;
             let report = repo_security::scan(&repository).context("security scanning failed")?;
             emit_diagnostics(&report.diagnostics);
-            if fail_on.is_some() && report.truncated {
+            if fail_on.is_some() && !report.coverage.required_gate_complete() {
                 exit_code = 6;
                 emit_diagnostics(&[Diagnostic {
                     code: "security_gate_incomplete".into(),
@@ -347,14 +454,22 @@ fn run(cli: Cli) -> Result<u8, Failure> {
                 }
                 Format::Sarif => write_json(&mut output, &repo_security::to_sarif(&report))?,
                 Format::Human => {
-                    writeln!(
-                        output,
-                        "{} static findings in {} files{}.",
-                        report.findings.len(),
-                        report.files_scanned,
-                        if report.truncated { " (truncated)" } else { "" }
-                    )
-                    .context("stdout write failed")?;
+                    if let Some(total) = report.coverage.finding_count {
+                        writeln!(
+                            output,
+                            "{total} static findings in {} evaluated files.",
+                            report.files_scanned
+                        )
+                        .context("stdout write failed")?;
+                    } else {
+                        writeln!(
+                            output,
+                            "Finding total not reported: security coverage is {} ({} observed finding records retained).",
+                            coverage_status_name(report.coverage.status),
+                            report.findings.len()
+                        )
+                        .context("stdout write failed")?;
+                    }
                     for finding in &report.findings {
                         writeln!(
                             output,
@@ -370,7 +485,8 @@ fn run(cli: Cli) -> Result<u8, Failure> {
                     }
                     writeln!(
                         output,
-                        "Dangerous primitives are review signals, not confirmed vulnerabilities."
+                        "Capabilities and bounded flows are review signals, not confirmed vulnerabilities. Required gate coverage: {}.",
+                        coverage_status_name(report.coverage.required_gate_status)
                     )
                     .context("stdout write failed")?;
                 }
@@ -382,12 +498,99 @@ fn run(cli: Cli) -> Result<u8, Failure> {
                 }
             }
         }
+        Command::Evidence {
+            manifest,
+            against,
+            repository_root,
+            result,
+            format,
+        } => {
+            let format = Format::from(format);
+            let snapshot = read_external_snapshot(&against, &repository_root)?;
+            let evidence_bytes = external_input::read_bounded_external_file(
+                &manifest,
+                &repository_root,
+                repo_security::MAX_EXTERNAL_EVIDENCE_BYTES as u64,
+            )
+            .map_err(external_input_failure)?;
+            let evidence = repo_security::read_external_evidence(Cursor::new(evidence_bytes))
+                .map_err(evidence_failure)?;
+            let expected = repo_security::EvidenceSubject {
+                repository_id: snapshot.repository_id,
+                commit_sha: repo_security::Nullable(snapshot.commit_sha),
+                snapshot_id: snapshot.snapshot_id,
+                configuration_id: snapshot.configuration_id,
+                selection_id: snapshot.selection_id,
+            };
+            repo_security::validate_evidence_subject(&evidence, &expected)
+                .map_err(evidence_failure)?;
+            match (evidence.result.state, result.as_deref()) {
+                (repo_security::ResultState::Present, Some(path)) => {
+                    let expected_size = evidence.result.size_bytes.0.ok_or_else(|| Failure {
+                        code: 3,
+                        message: "present evidence result is missing bounded artifact metadata"
+                            .into(),
+                    })?;
+                    let expected_digest =
+                        evidence.result.sha256.0.as_deref().ok_or_else(|| Failure {
+                            code: 3,
+                            message: "present evidence result is missing bounded artifact metadata"
+                                .into(),
+                        })?;
+                    external_input::verify_external_result_artifact(
+                        path,
+                        &repository_root,
+                        repo_security::MAX_EXTERNAL_RESULT_BYTES,
+                        expected_size,
+                        expected_digest,
+                    )
+                    .map_err(external_input_failure)?;
+                }
+                (repo_security::ResultState::Present, None) => {
+                    return Err(Failure {
+                        code: 2,
+                        message: "complete or incomplete evidence with a present result requires --result"
+                            .into(),
+                    });
+                }
+                (repo_security::ResultState::Absent, Some(_)) => {
+                    return Err(Failure {
+                        code: 2,
+                        message: "failed evidence with an absent result does not accept --result"
+                            .into(),
+                    });
+                }
+                (repo_security::ResultState::Absent, None) => {}
+            }
+            if format == Format::Json {
+                write_json(&mut output, &evidence)?;
+            } else {
+                writeln!(
+                    output,
+                    "External {} evidence {} validated against snapshot {}; status: {:?}.",
+                    safe_text(&evidence.producer.tool_name),
+                    evidence.evidence_id,
+                    expected.snapshot_id,
+                    evidence.execution.status
+                )
+                .context("stdout write failed")?;
+                if evidence.result.state == repo_security::ResultState::Present {
+                    writeln!(
+                        output,
+                        "The manifest and artifact digest are self-consistent metadata, not producer authentication or proof of sandbox enforcement."
+                    )
+                    .context("stdout write failed")?;
+                } else {
+                    writeln!(
+                        output,
+                        "The manifest metadata is self-consistent; no result artifact was declared. This is not producer authentication or proof of sandbox enforcement."
+                    )
+                    .context("stdout write failed")?;
+                }
+            }
+        }
         Command::Doctor { scan, format } => {
-            require_format(
-                format,
-                &[Format::Human, Format::Json],
-                "doctor supports human or json",
-            )?;
+            let format = Format::from(format);
             let repository = scan.open()?;
             emit_diagnostics(&repository.diagnostics);
             let report = json!({
@@ -404,6 +607,15 @@ fn run(cli: Cli) -> Result<u8, Failure> {
                     "threads": repository.options.threads
                 },
                 "ast_languages": ["php", "javascript", "typescript", "python"],
+                "extended_ast_languages": ["php", "javascript", "typescript", "python", "rust", "shell"],
+                "caller_history_manifest_supported": true,
+                "security_coverage_schema_version": repo_security::SECURITY_COVERAGE_SCHEMA_VERSION,
+                "execution_signal_schema_version": repo_security::EXECUTION_SIGNAL_SCHEMA_VERSION,
+                "bounded_dataflow_schema_version": repo_security::BOUNDED_DATAFLOW_SCHEMA_VERSION,
+                "advanced_analysis_schema_version": repo_analyzer::ADVANCED_ANALYSIS_SCHEMA_VERSION,
+                "history_manifest_schema_version": repo_analyzer::HISTORY_MANIFEST_SCHEMA_VERSION,
+                "hotspot_report_schema_version": repo_analyzer::HOTSPOT_REPORT_SCHEMA_VERSION,
+                "external_security_evidence_schema_version": repo_security::EXTERNAL_EVIDENCE_SCHEMA_VERSION,
                 "network_required": false, "repository_code_executed": false,
                 "symlinks_followed": false, "external_process_isolation_required": true,
                 "git_history_available": false
@@ -411,28 +623,34 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             if format == Format::Json {
                 write_json(&mut output, &report)?;
             } else {
-                writeln!(output, "atlas-engine {ENGINE_VERSION}; schema {SCHEMA_VERSION}\nInput opened safely; {} files selected, {} diagnostics.\nAST: PHP, JavaScript, TypeScript, Python. No network or repository execution.\nUse a read-only snapshot and external CPU/memory/time limits for hostile input.\nGit churn and Git history acceleration: not implemented.", repository.files.len(), repository.diagnostics.len()).context("stdout write failed")?;
+                writeln!(output, "atlas-engine {ENGINE_VERSION}; schema {SCHEMA_VERSION}\nInput opened safely; {} files selected, {} diagnostics.\nLegacy AST: PHP, JavaScript, TypeScript, Python. Opt-in analysis also supports Rust and Shell.\nNo network or repository execution. Use a read-only snapshot and external CPU/memory/time limits for hostile input.\nGit objects are not read; churn is accepted only through a bounded caller manifest.", repository.files.len(), repository.diagnostics.len()).context("stdout write failed")?;
             }
         }
         Command::Version { format } => {
-            require_format(
-                format,
-                &[Format::Human, Format::Json],
-                "version supports human or json",
-            )?;
+            let format = Format::from(format);
             if format == Format::Json {
                 write_json(
                     &mut output,
                     &json!({
                         "schema_version": SCHEMA_VERSION,
                         "engine_version": ENGINE_VERSION,
-                        "index_snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION
+                        "index_snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
+                        "security_coverage_schema_version": repo_security::SECURITY_COVERAGE_SCHEMA_VERSION,
+                        "execution_signal_schema_version": repo_security::EXECUTION_SIGNAL_SCHEMA_VERSION,
+                        "bounded_dataflow_schema_version": repo_security::BOUNDED_DATAFLOW_SCHEMA_VERSION,
+                        "advanced_analysis_schema_version": repo_analyzer::ADVANCED_ANALYSIS_SCHEMA_VERSION,
+                        "history_manifest_schema_version": repo_analyzer::HISTORY_MANIFEST_SCHEMA_VERSION,
+                        "hotspot_report_schema_version": repo_analyzer::HOTSPOT_REPORT_SCHEMA_VERSION,
+                        "external_security_evidence_schema_version": repo_security::EXTERNAL_EVIDENCE_SCHEMA_VERSION
                     }),
                 )?;
             } else {
                 writeln!(
                     output,
-                    "atlas-engine {ENGINE_VERSION} (schema {SCHEMA_VERSION}; index snapshots {SNAPSHOT_SCHEMA_VERSION})"
+                    "atlas-engine {ENGINE_VERSION} (schema {SCHEMA_VERSION}; index snapshots {SNAPSHOT_SCHEMA_VERSION}; security coverage {}; advanced analysis {}; external evidence {})",
+                    repo_security::SECURITY_COVERAGE_SCHEMA_VERSION,
+                    repo_analyzer::ADVANCED_ANALYSIS_SCHEMA_VERSION,
+                    repo_security::EXTERNAL_EVIDENCE_SCHEMA_VERSION
                 )
                 .context("stdout write failed")?;
             }
@@ -453,6 +671,83 @@ fn snapshot_failure(error: SnapshotError) -> Failure {
     Failure {
         code,
         message: error.to_string(),
+    }
+}
+
+fn external_input_failure(error: external_input::ExternalInputError) -> Failure {
+    Failure {
+        code: if error == external_input::ExternalInputError::InvalidConfiguration {
+            4
+        } else {
+            3
+        },
+        message: error.to_string(),
+    }
+}
+
+fn evidence_failure(error: repo_security::EvidenceError) -> Failure {
+    Failure {
+        code: 3,
+        message: error.to_string(),
+    }
+}
+
+fn history_failure(error: repo_analyzer::HistoryError) -> Failure {
+    Failure {
+        code: if matches!(error, repo_analyzer::HistoryError::NumericOverflow) {
+            4
+        } else {
+            3
+        },
+        message: error.to_string(),
+    }
+}
+
+fn read_external_snapshot(path: &Path, repository: &Path) -> Result<SnapshotManifest, Failure> {
+    let bytes =
+        external_input::read_bounded_external_file(path, repository, MAX_MANIFEST_BYTES as u64)
+            .map_err(external_input_failure)?;
+    read_manifest(Cursor::new(bytes)).map_err(snapshot_failure)
+}
+
+fn read_external_history(
+    path: &Path,
+    repository: &Path,
+) -> Result<repo_analyzer::HistoryManifest, Failure> {
+    let bytes = external_input::read_bounded_external_file(
+        path,
+        repository,
+        repo_analyzer::MAX_HISTORY_MANIFEST_BYTES as u64,
+    )
+    .map_err(external_input_failure)?;
+    repo_analyzer::read_history_manifest(Cursor::new(bytes)).map_err(history_failure)
+}
+
+fn validate_snapshot_binding(
+    repository: &Repository,
+    snapshot: &SnapshotManifest,
+) -> Result<(), Failure> {
+    let expected_paths = repository
+        .files
+        .iter()
+        .filter(|file| !file.binary && file.utf8)
+        .map(|file| file.relative_path.as_str());
+    let snapshot_paths = snapshot
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str());
+    let matches = repository.metadata.repository_id.as_deref()
+        == Some(snapshot.repository_id.as_str())
+        && repository.metadata.git.commit_sha == snapshot.commit_sha
+        && repository.selection_fingerprint == snapshot.selection_id
+        && expected_paths.eq(snapshot_paths);
+    if matches {
+        Ok(())
+    } else {
+        Err(Failure {
+            code: 3,
+            message: "accepted snapshot does not match the selected analysis inventory".into(),
+        })
     }
 }
 
@@ -543,14 +838,13 @@ fn open_manifest_file(
     ))
 }
 
-fn require_format(format: Format, allowed: &[Format], message: &str) -> Result<(), Failure> {
-    if allowed.contains(&format) {
-        Ok(())
-    } else {
-        Err(Failure {
-            code: 2,
-            message: message.into(),
-        })
+fn coverage_status_name(status: repo_core::CoverageStatus) -> &'static str {
+    match status {
+        repo_core::CoverageStatus::Complete => "complete",
+        repo_core::CoverageStatus::Partial => "partial",
+        repo_core::CoverageStatus::Unsupported => "unsupported",
+        repo_core::CoverageStatus::Excluded => "excluded",
+        repo_core::CoverageStatus::NotReported => "not_reported",
     }
 }
 
@@ -597,6 +891,31 @@ fn render_analysis(
             language.files,
             language.bytes,
             language.lines
+        )?;
+    }
+    if let Some(advanced) = &report.advanced {
+        writeln!(
+            output,
+            "Advanced analysis: {}. Dependency observations: {}; test mappings: {}.",
+            coverage_status_name(advanced.status),
+            advanced
+                .dependency_graph
+                .observation_count
+                .map_or_else(|| "not reported".into(), |count| count.to_string()),
+            advanced
+                .test_mappings
+                .mapping_count
+                .map_or_else(|| "not reported".into(), |count| count.to_string())
+        )?;
+    }
+    if let Some(hotspots) = &report.hotspots {
+        writeln!(
+            output,
+            "Decision x commit hotspots: {} total; status {}.",
+            hotspots
+                .hotspot_count
+                .map_or_else(|| "not reported".into(), |count| count.to_string()),
+            coverage_status_name(hotspots.status)
         )?;
     }
     if !report.largest_files.is_empty() {
@@ -647,7 +966,7 @@ fn safe_text(value: &str) -> String {
     let redacted = repo_core::redact_secrets(value);
     let mut result = String::new();
     for ch in redacted.content.chars().take(4096) {
-        if ch.is_control() || matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+        if repo_core::is_unsafe_display_char(ch) {
             result.extend(ch.escape_default());
         } else {
             result.push(ch);
@@ -731,8 +1050,10 @@ mod tests {
 
     #[test]
     fn terminal_output_cannot_include_escape_or_bidi_controls() {
-        let escaped = safe_text("bad\u{1b}[31m\u{202e}filename");
+        let escaped = safe_text("bad\u{1b}[31m\u{2028}line\u{2029}paragraph\u{202e}filename");
         assert!(!escaped.contains('\u{1b}'));
+        assert!(!escaped.contains('\u{2028}'));
+        assert!(!escaped.contains('\u{2029}'));
         assert!(!escaped.contains('\u{202e}'));
     }
 

@@ -7,6 +7,8 @@ updates:
       day: monday
       time: '03:00'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
   - package-ecosystem: cargo
     directory: /fuzz
@@ -15,6 +17,8 @@ updates:
       day: monday
       time: '03:15'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
   - package-ecosystem: github-actions
     directory: /
@@ -23,4 +27,6 @@ updates:
       day: monday
       time: '03:30'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5

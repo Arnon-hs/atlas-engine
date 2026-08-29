@@ -1,6 +1,6 @@
 # Implementation API
 
-Core contract and v0.2 snapshot extensions. Public Rust details may evolve
+Core contract and v0.3 opt-in analysis/security extensions. Public Rust details may evolve
 within 0.x; published JSON schema major compatibility is governed separately.
 
 `repo_core` exports the following types. The dependency alias is `repo-core` even
@@ -8,7 +8,7 @@ though its crates.io package is `atlas-repo-core`.
 
 ```text
 SCHEMA_VERSION: &str = "1.0"
-ENGINE_VERSION: &str = "0.2.0"
+ENGINE_VERSION: &str = "0.3.0"
 ScanOptions: Clone + Debug + Default
   max_file_size: u64 (2 MiB)
   max_files: usize (100_000)
@@ -37,6 +37,7 @@ Language: Clone + Copy + Debug + Ord + Serialize (snake_case)
   Php, JavaScript, TypeScript, Python, Json, Yaml, Toml, Markdown, Shell, Rust, Unknown
 Language::is_source(self) -> bool
 Language::has_ast(self) -> bool
+Language::has_extended_ast(self) -> bool
 Diagnostic: Clone + Debug + Serialize
   code: String, relative_path: Option<String>, message: String
 CoreError: thiserror enum
@@ -45,8 +46,18 @@ CoreError: thiserror enum
 ParserRegistry: Default
 ParserRegistry::parse(&self, language: Language, relative_path: &str,
                      source: &str, max_parse_millis: u64) -> ParsedFile
+ParserRegistry::parse_extended(&self, language: Language, relative_path: &str,
+                              source: &str, max_parse_millis: u64) -> ParsedFile
 ParsedFile: symbols: Vec<Symbol>, calls: Vec<CallSite>, imports: Vec<ImportBinding>,
+            dependencies: Vec<DependencyFact>,
+            status: CoverageStatus, structural_metrics: Option<StructuralMetrics>,
+            dataflow_status: CoverageStatus, dataflows: Vec<DataFlowFact>,
             diagnostics: Vec<ParseDiagnostic>
+CoverageStatus: Complete, Partial, Unsupported, Excluded, NotReported
+StructuralMetrics: functions, branch_points, max_control_nesting
+  explicit supported syntax counts, not cyclomatic complexity
+DataFlowFact: fixed kind, source_range, sink_range, assignment_hops
+  bounded Python intraprocedural fact without source text or identifiers
 Symbol: kind: SymbolKind, name: String, qualified_name: String, range: SourceRange
 SymbolKind: Clone + Copy + Debug + Serialize (snake_case)
   Class, Interface, Trait, Function, Method, Constructor, Module, Constant
@@ -56,6 +67,9 @@ SourceRange: start_line: usize, end_line: usize, start_byte: usize, end_byte: us
 CallSite: callee: String, range: SourceRange,
           literal_boolean_options: Vec<LiteralBooleanOption>
 ImportBinding: module: String, imported_name: Option<String>, local_name: String
+DependencyFact: syntax: StaticImport | DynamicImport, module: Option<String>,
+                range: SourceRange
+  dynamic expressions never retain their argument or source text
 LiteralBooleanOption: name: String, value: bool, argument_index: Option<usize>
   None identifies a direct Python keyword; Some(index) identifies a direct
   property of that zero-based JavaScript/TypeScript object argument
@@ -71,8 +85,11 @@ Higher crates consume the same immutable Repository. Analyzer exposes
 `analyze(&Repository) -> Result<AnalysisReport, AnalyzerError>`. Indexer exposes
 `index_to_writer(&Repository, &IndexOptions, impl Write) -> Result<IndexSummary, IndexError>`
 and a per-file chunk function for testing/fuzzing. Index options have
-`max_chunk_bytes: usize` (16 KiB) and no secret-redaction opt-out. All output structs
-include schema and engine versions. Index record hashing covers redacted content.
+`max_chunk_bytes: usize` (16 KiB) and no secret-redaction opt-out.
+`AnalysisReport`, `IndexSummary` and `IndexRecord` carry legacy schema and engine
+identity. Opt-in nested contracts carry their documented schema identity, with
+engine identity on the outer report or accepted snapshot where applicable. Index
+record hashing covers redacted content.
 
 Imports and boolean options come from actual syntax, not declarations found in
 comments or strings. Their strings use the same redacted source coordinates and
@@ -88,3 +105,18 @@ The result has completeness, optional accepted manifest, event counts and
 diagnostics. Full target parsing is one file at a time; only bounded metadata is
 retained across files. See [snapshot semantics](../contracts/index-snapshots-v2.md)
 for hash domains, provenance rebinding and consumer acceptance requirements.
+
+`repo_analyzer` additionally exports opt-in `analyze_advanced`, strict
+`read_history_manifest` / `validate_history_binding`, and
+`decision_commit_hotspots`. Advanced records retain independent grammar,
+complexity and dependency coverage; history is caller supplied and bound to a
+separately accepted snapshot by the CLI.
+
+`repo_security::scan` returns fixed-vocabulary execution capabilities, bounded
+dataflow facts and a `SecurityCoverage` envelope in addition to legacy findings.
+Coverage records every admitted file/domain and independent selected/read/parsed/
+evaluated stages; counts exist only for complete domains. The crate also exports
+strict passive `read_external_evidence` / `validate_evidence_subject` APIs. Those
+APIs never start a scanner or parse its private result artifact. See the
+[coverage](../contracts/security-coverage-v1.md) and
+[external-evidence](../contracts/external-security-evidence-v1.md) contracts.

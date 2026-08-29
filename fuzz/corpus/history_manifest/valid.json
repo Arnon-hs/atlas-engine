@@ -1,0 +1,23 @@
+{
+  "base_commit_sha": "1111111111111111111111111111111111111111",
+  "complete": true,
+  "configuration_id": "3333333333333333333333333333333333333333333333333333333333333333",
+  "entries": [
+    {
+      "commit_count": 3,
+      "lines_added": null,
+      "lines_deleted": 0,
+      "relative_path": "src/main.py"
+    }
+  ],
+  "history_mode": "first_parent",
+  "manifest_id": "8611e4d112ca160c4b26f18033f9a3120d4d61cd2d7d39a7a1d4a35d43e8a2ef",
+  "producer": {
+    "name": "fixture-producer",
+    "version": "1.0.0"
+  },
+  "rename_mode": "no_follow",
+  "repository_id": "test/history",
+  "schema_version": "1.0",
+  "target_commit_sha": "2222222222222222222222222222222222222222"
+}

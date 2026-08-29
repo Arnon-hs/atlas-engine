@@ -41,9 +41,9 @@ release; no finding is closed based only on a tool's successful exit status.
 
 | Version | Policy |
 | --- | --- |
-| 0.1 development source | Best-effort fixes on `main`; no released support window yet |
-| Future latest 0.1.x release | Intended to receive fixes until superseded by a later supported minor; exact dates must accompany a release |
-| Earlier superseded minors/previews | No promised backports; explicit exceptions require a published support notice |
+| Unreleased 0.3 development source | Best-effort fixes on `main`; no released support window yet |
+| Future latest release | Intended to receive fixes until superseded by a later supported minor; exact dates must accompany a release |
+| Earlier source baselines/previews | No promised backports; explicit exceptions require a published support notice |
 
 Do not infer a maintenance guarantee from a version number. Before the first
 release, the owner must publish the actual supported version(s), support period,

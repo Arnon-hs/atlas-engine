@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/execution-signal-v1.schema.json",
+  "title": "Atlas Engine execution-surface signal v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "relative_path",
+    "line",
+    "column"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "dynamic_evaluation_primitive",
+        "process_execution_primitive",
+        "deserialization_primitive",
+        "package_script",
+        "composer_script",
+        "cargo_build_script",
+        "cargo_build_dependencies",
+        "github_workflow_triggers",
+        "github_workflow_permissions",
+        "github_workflow_uses",
+        "github_workflow_mutable_ref",
+        "docker_entrypoint",
+        "docker_command",
+        "docker_root_user",
+        "docker_privileged",
+        "tls_verification_disabled"
+      ]
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "column": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}
