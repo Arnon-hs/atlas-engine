@@ -36,7 +36,7 @@ controls are included as targets, without asserting maturity.
 | OSPS-BR-02.02 | PLANNED | Version/target artifact naming prepared; requires actual release assets |
 | OSPS-BR-03.01 | MET | Project/reporter/support URLs use HTTPS in [README](../../README.md), [SECURITY](../../SECURITY.md) and [SUPPORT](../../SUPPORT.md) |
 | OSPS-BR-03.02 | PLANNED | Planned GitHub HTTPS distribution plus attestation verification; no published distribution validated |
-| OSPS-BR-04.01 | MET | [Changelog](../../CHANGELOG.md) contains a dated functional/security entry for 0.4.1 and distinguishes unpublished source baselines |
+| OSPS-BR-04.01 | MET | [Changelog](../../CHANGELOG.md) contains a dated functional/security entry for 0.4.2 and distinguishes unpublished source tags and baselines |
 | OSPS-BR-05.01 | MET | [Locked Cargo build](../../.github/workflows/ci.yml), standard Cargo advisory tools, and [verified source installer](../../scripts/install_cyclonedx.py) ingest dependencies through standard tooling |
 | OSPS-BR-06.01 | PLANNED | Checksums and keyless attestations configured, but no signed published artifact set verified |
 | OSPS-BR-07.01 | PLANNED | Synthetic fixtures and ignore rules exist; hosted secret scanning/push protection and full initial history/rights review still required |

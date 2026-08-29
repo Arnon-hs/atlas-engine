@@ -3,7 +3,16 @@
 Changes use [Semantic Versioning](https://semver.org/). JSON schema major versions
 are independent and follow [contract policy](docs/contracts/versioning.md).
 
-## 0.4.1 — 2026-08-29
+## 0.4.2 — 2026-08-29
+
+- Replace runner-local CycloneDX component references before release
+  serialization and reject any non-portable path that remains in a sidecar or
+  packaged SBOM. Component references no longer depend on the checkout location;
+  this does not claim byte-for-byte reproducible SBOMs or binaries.
+- Bind the SBOM generator, root identity, component graph and reserved properties
+  to the release identity document, and reject oversized metadata before parsing.
+
+## 0.4.1 source tag — no published release
 
 - Make the closed-diagnostics-pipe contract deterministic by closing the read
   end before the child process starts. This removes a platform-scheduling race
@@ -11,6 +20,8 @@ are independent and follow [contract policy](docs/contracts/versioning.md).
 - Produce native archives for x86-64 and ARM64 Linux and macOS with checksums,
   CycloneDX SBOMs, dependency notices and release metadata that binds the exact
   source revision; hosted publication and attestations remain externally verified.
+- Hosted validation stopped because generated SBOM metadata retained a
+  runner-local build path. No GitHub Release, assets or attestations were published.
 
 ## 0.4.0 source tag — no published release
 

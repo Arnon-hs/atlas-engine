@@ -15,8 +15,10 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from check_sast import blocking_findings
-from prepare_release import (main as prepare_release, release_identity, source_revision,
-                             validate_prepared_assets)
+from prepare_release import (MAX_SBOM_BYTES, _load_cyclonedx_sbom,
+                             main as prepare_release, release_identity,
+                             sanitize_cyclonedx_sbom, source_revision,
+                             validate_cyclonedx_sbom, validate_prepared_assets)
 
 
 def sarif_report():
@@ -35,7 +37,12 @@ def finding(rule_id, **properties):
     return {"ruleId": rule_id, "message": {"text": "Synthetic test finding"}, **properties}
 
 
-RELEASE_NAME = "atlas-engine-v0.4.0-aarch64-apple-darwin"
+RELEASE_VERSION = "0.4.2"
+RELEASE_TAG = f"v{RELEASE_VERSION}"
+RELEASE_TARGET = "aarch64-apple-darwin"
+RELEASE_NAME = f"atlas-engine-{RELEASE_TAG}-{RELEASE_TARGET}"
+SOURCE_REVISION = "a" * 40
+LOCK_SHA256 = "b" * 64
 LICENSE_PATH = "synthetic-1.0.0/LICENSE"
 LICENSE_TEXT = b"Synthetic MIT license text.\n"
 
@@ -47,9 +54,126 @@ def add_regular_member(package, name, contents=b"adversarial member\n"):
     package.addfile(member, io.BytesIO(contents))
 
 
+def cargo_sbom(workspace="/home/runner/work/atlas-engine/atlas-engine",
+               version=RELEASE_VERSION):
+    root_ref = f"path+file://{workspace}/crates/atlas-engine-cli#atlas-engine@{version}"
+    library_ref = f"path+file://{workspace}/crates/repo-core#atlas-repo-core@{version}"
+    registry_ref = "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229"
+    registry_purl = "pkg:cargo/serde@1.0.229"
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "serialNumber": "urn:uuid:12345678-1234-4234-8234-123456789abc",
+        "metadata": {
+            "timestamp": "2026-08-29T00:00:00Z",
+            "tools": [{
+                "vendor": "CycloneDX", "name": "cargo-cyclonedx", "version": "0.5.9",
+            }],
+            "properties": [{
+                "name": "cdx:rustc:sbom:target:triple", "value": RELEASE_TARGET,
+            }],
+            "component": {
+                "type": "application",
+                "bom-ref": root_ref,
+                "description": (
+                    "Offline, read-only source repository analysis, structural indexing "
+                    "and security scanning"
+                ),
+                "externalReferences": [
+                    {
+                        "type": "website",
+                        "url": "https://github.com/Arnon-hs/atlas-engine",
+                    },
+                    {
+                        "type": "vcs",
+                        "url": "https://github.com/Arnon-hs/atlas-engine",
+                    },
+                ],
+                "licenses": [{"expression": "MIT OR Apache-2.0"}],
+                "name": "atlas-engine",
+                "version": version,
+                "scope": "required",
+                "purl": f"pkg:cargo/atlas-engine@{version}?download_url=file://.",
+                "components": [{
+                    "type": "application",
+                    "bom-ref": root_ref + " bin-target-0",
+                    "name": "atlas-engine",
+                    "version": version,
+                    "purl": (
+                        f"pkg:cargo/atlas-engine@{version}"
+                        "?download_url=file://.#src/main.rs"
+                    ),
+                }],
+            },
+        },
+        "components": [{
+            "type": "library",
+            "bom-ref": library_ref,
+            "description": "Synthetic workspace library",
+            "externalReferences": [{
+                "type": "vcs", "url": "https://github.com/Arnon-hs/atlas-engine",
+            }],
+            "licenses": [{"expression": "MIT OR Apache-2.0"}],
+            "name": "atlas-repo-core",
+            "scope": "required",
+            "version": version,
+            "purl": f"pkg:cargo/atlas-repo-core@{version}?download_url=file://../repo-core",
+        }, {
+            "type": "library",
+            "bom-ref": registry_ref,
+            "description": "Synthetic registry library",
+            "externalReferences": [{
+                "type": "vcs", "url": "https://github.com/serde-rs/serde",
+            }],
+            "licenses": [{"expression": "MIT OR Apache-2.0"}],
+            "name": "serde",
+            "scope": "required",
+            "version": "1.0.229",
+            "purl": registry_purl,
+        }],
+        "dependencies": [
+            {"ref": root_ref, "dependsOn": [library_ref, registry_ref]},
+            {"ref": library_ref, "dependsOn": [registry_ref]},
+            {"ref": registry_ref, "dependsOn": []},
+        ],
+    }
+
+
+def release_sbom():
+    sbom = sanitize_cyclonedx_sbom(cargo_sbom())
+    sbom["metadata"]["properties"] = [
+        {"name": "cdx:rustc:sbom:target:triple", "value": RELEASE_TARGET},
+        {"name": "atlas-engine:source-revision", "value": SOURCE_REVISION},
+        {"name": "atlas-engine:release-tag", "value": RELEASE_TAG},
+        {"name": "atlas-engine:target", "value": RELEASE_TARGET},
+        {"name": "atlas-engine:cargo-lock-sha256", "value": LOCK_SHA256},
+        {"name": "synthetic:unrelated", "value": "preserved"},
+    ]
+    return sbom
+
+
+def release_identity_document():
+    return {
+        "engine_version": RELEASE_VERSION,
+        "schema_version": "1.0",
+        "tag": RELEASE_TAG,
+        "source_repository": "https://github.com/Arnon-hs/atlas-engine",
+        "source_revision": SOURCE_REVISION,
+        "target": RELEASE_TARGET,
+        "cargo_lock_sha256": LOCK_SHA256,
+        "rustc": "rustc 1.98.0 (synthetic)",
+        "workflow": None,
+        "slsa_status": (
+            "No SLSA level claimed; verify hosted attestations and release policy separately."
+        ),
+    }
+
+
 def prepared_assets(output, *, extra_member=None, include_license=True,
                     actual_license=LICENSE_TEXT, declared_license=LICENSE_TEXT,
-                    required_directory=None):
+                    required_directory=None, sbom_document=None,
+                    release_document=None):
     name = RELEASE_NAME
     package_root = output / name
     for relative in [
@@ -76,7 +200,7 @@ def prepared_assets(output, *, extra_member=None, include_license=True,
         license_file.write_bytes(actual_license)
     inventory = {
         "format_version": 1,
-        "target": "aarch64-apple-darwin",
+        "target": RELEASE_TARGET,
         "root_package": "atlas-engine",
         "components": [{
             "name": "synthetic",
@@ -99,8 +223,12 @@ def prepared_assets(output, *, extra_member=None, include_license=True,
 
     sbom = output / f"{name}.cdx.json"
     release = output / f"{name}.release.json"
-    sbom.write_text('{"bomFormat":"CycloneDX"}\n')
-    release.write_text('{"engine_version":"0.4.0"}\n')
+    if sbom_document is None:
+        sbom_document = release_sbom()
+    if release_document is None:
+        release_document = release_identity_document()
+    sbom.write_text(json.dumps(sbom_document) + "\n")
+    release.write_text(json.dumps(release_document) + "\n")
     (package_root / "sbom.cdx.json").write_bytes(sbom.read_bytes())
     (package_root / "release.json").write_bytes(release.read_bytes())
 
@@ -118,6 +246,360 @@ def prepared_assets(output, *, extra_member=None, include_license=True,
 
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_sbom_sanitizer_replaces_linux_and_macos_local_refs_consistently(self):
+        for workspace in [
+            "/home/runner/work/atlas-engine/atlas-engine",
+            "/Users/runner/work/atlas-engine/atlas-engine",
+        ]:
+            with self.subTest(workspace=workspace):
+                sbom = cargo_sbom(workspace)
+                registry_purl = sbom["components"][1]["purl"]
+                sanitized = sanitize_cyclonedx_sbom(sbom)
+                root_ref = f"pkg:cargo/atlas-engine@{RELEASE_VERSION}"
+                library_ref = f"pkg:cargo/atlas-repo-core@{RELEASE_VERSION}"
+                registry_ref = (
+                    "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229"
+                )
+
+                self.assertEqual(sanitized["metadata"]["component"]["bom-ref"], root_ref)
+                self.assertEqual(
+                    sanitized["metadata"]["component"]["components"][0]["bom-ref"],
+                    root_ref + "#src/main.rs",
+                )
+                self.assertEqual(sanitized["components"][0]["bom-ref"], library_ref)
+                self.assertEqual(sanitized["components"][1]["bom-ref"], registry_ref)
+                self.assertEqual(sanitized["components"][1]["purl"], registry_purl)
+                self.assertEqual(sanitized["dependencies"], [
+                    {"ref": root_ref, "dependsOn": [library_ref, registry_ref]},
+                    {"ref": library_ref, "dependsOn": [registry_ref]},
+                    {"ref": registry_ref, "dependsOn": []},
+                ])
+                self.assertNotIn(workspace, json.dumps(sanitized))
+                self.assertNotIn("download_url=file", json.dumps(sanitized))
+                validate_cyclonedx_sbom(sanitized)
+
+    def test_sbom_sanitizer_rejects_dangling_duplicate_and_colliding_refs(self):
+        dangling = cargo_sbom()
+        dangling["dependencies"][0]["dependsOn"].append("missing-component")
+        duplicate = cargo_sbom()
+        duplicate["components"].append(copy.deepcopy(duplicate["components"][1]))
+        collision = cargo_sbom()
+        colliding = copy.deepcopy(collision["components"][0])
+        colliding["bom-ref"] = (
+            f"path+file:///different/checkout/repo-core#atlas-repo-core@{RELEASE_VERSION}"
+        )
+        collision["components"].append(colliding)
+
+        for sbom, message in [
+            (dangling, "dependency references"),
+            (duplicate, "unique strings"),
+            (collision, "references collide"),
+        ]:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                sanitize_cyclonedx_sbom(sbom)
+
+    def test_sbom_sanitizer_canonicalizes_safe_qualifiers_and_relative_subpath(self):
+        sbom = cargo_sbom()
+        component = sbom["components"][0]
+        component["purl"] = (
+            f"pkg:cargo/atlas-repo-core@{RELEASE_VERSION}"
+            "?zeta=safe&download_url=file://../repo-core&arch=aarch64#vendor/source.rs"
+        )
+        sanitized = sanitize_cyclonedx_sbom(sbom)
+        canonical = (
+            f"pkg:cargo/atlas-repo-core@{RELEASE_VERSION}"
+            "?arch=aarch64&zeta=safe#vendor/source.rs"
+        )
+        self.assertEqual(sanitized["components"][0]["bom-ref"], canonical)
+        self.assertEqual(sanitized["components"][0]["purl"], canonical)
+        validate_cyclonedx_sbom(sanitized, expected_version=RELEASE_VERSION)
+
+    def test_sbom_purl_rejects_encoded_paths_dot_segments_and_double_encoding(self):
+        unsafe_suffixes = [
+            "#%2FUsers/runner/work",
+            "#C%3A/Users/runner/work",
+            "#%5C%5Crunner-host%5Cwork",
+            "#src/%2e%2e/secrets",
+            "#%252FUsers%252Frunner",
+            "?download_url=%2566ile%253A%252F%252F%252Fhome%252Frunner",
+            "?download_url=%2570ath%252bfile%253A%252F%252F%252Fhome",
+        ]
+        for suffix in unsafe_suffixes:
+            with self.subTest(suffix=suffix):
+                sbom = release_sbom()
+                component = sbom["components"][1]
+                component["purl"] = f"pkg:cargo/serde@1.0.229{suffix}"
+                with self.assertRaisesRegex(ValueError, "Cargo package URL|unsafe subpath"):
+                    validate_cyclonedx_sbom(sbom, expected_version=RELEASE_VERSION)
+
+    def test_sbom_validation_rejects_absolute_paths_in_all_string_fields(self):
+        leaks = [
+            "/",
+            "/home/runner/work/atlas-engine",
+            "//runner-host/work/atlas-engine",
+            "/Users/runner/work/atlas-engine",
+            r"C:\Users\runner\work\atlas-engine",
+            r"\\runner-host\work\atlas-engine",
+            "file:///home/runner/work/atlas-engine",
+            "pkg:cargo/example@1.0.0?download_url=file://.",
+            "pkg:cargo/example@1.0.0?download_url=file%3A%2F%2F%2FUsers%2Frunner",
+        ]
+        for leak in leaks:
+            with self.subTest(leak=leak):
+                sbom = sanitize_cyclonedx_sbom(cargo_sbom())
+                sbom["metadata"]["properties"] = [{"name": "host", "value": leak}]
+                with self.assertRaisesRegex(ValueError, "build-host path"):
+                    validate_cyclonedx_sbom(sbom)
+
+    def test_sbom_validation_bounds_deep_and_wide_json_without_recursion(self):
+        deep = "bounded"
+        for _ in range(2_000):
+            deep = [deep]
+        baseline = sanitize_cyclonedx_sbom(cargo_sbom())
+        with mock.patch("prepare_release.MAX_SBOM_NODES", 128):
+            validate_cyclonedx_sbom(baseline)
+        for shape, extra in [("deep", deep), ("wide", list(range(128)))]:
+            with self.subTest(shape=shape):
+                sbom = sanitize_cyclonedx_sbom(cargo_sbom())
+                sbom["metadata"]["extra"] = extra
+                with mock.patch("prepare_release.MAX_SBOM_NODES", 128), \
+                        self.assertRaisesRegex(ValueError, "node limit"):
+                    validate_cyclonedx_sbom(sbom)
+
+    def test_sbom_file_size_is_rejected_before_json_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "oversized.cdx.json"
+            path.write_bytes(b" " * (MAX_SBOM_BYTES + 1))
+            with mock.patch("prepare_release.json.loads") as loader, \
+                    self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                _load_cyclonedx_sbom(path)
+            loader.assert_not_called()
+
+    def test_prepared_archive_rejects_sbom_path_leak_even_when_checksums_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            sbom = sanitize_cyclonedx_sbom(cargo_sbom())
+            sbom["metadata"]["properties"] = [{
+                "name": "build-directory", "value": "/Users/runner/work/atlas-engine",
+            }]
+            name = prepared_assets(output, sbom_document=sbom)
+            with self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                validate_prepared_assets(output, name)
+
+    def test_prepared_assets_reject_prefixed_absolute_paths_with_matching_checksums(self):
+        leaks = [
+            "prefix[/Users/runner/work/atlas-engine]",
+            "urn:build:/home/runner/work/atlas-engine",
+            r"prefix[C:\Users\runner\work\atlas-engine]",
+        ]
+        for leak in leaks:
+            with self.subTest(leak=leak), tempfile.TemporaryDirectory() as directory:
+                sbom = release_sbom()
+                sbom["metadata"]["properties"].append({"name": "host", "value": leak})
+                output = pathlib.Path(directory)
+                name = prepared_assets(output, sbom_document=sbom)
+                with self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                    validate_prepared_assets(output, name)
+
+    def test_prepared_assets_reject_malformed_or_incomplete_sbom_with_matching_checksums(self):
+        cases = []
+
+        encoded_absolute = release_sbom()
+        encoded_absolute["components"][1]["purl"] = (
+            "pkg:cargo/serde@1.0.229#%2Fhome/runner/work"
+        )
+        cases.append(("encoded absolute PURL subpath", encoded_absolute))
+
+        double_encoded = release_sbom()
+        double_encoded["components"][1]["purl"] = (
+            "pkg:cargo/serde@1.0.229"
+            "?download_url=%2566ile%253A%252F%252F%252Fhome%252Frunner"
+        )
+        cases.append(("double encoded file URI", double_encoded))
+
+        cases.append(("header only", {"bomFormat": "CycloneDX", "specVersion": "1.5"}))
+
+        missing_type = release_sbom()
+        del missing_type["components"][0]["type"]
+        cases.append(("missing component type", missing_type))
+
+        missing_name = release_sbom()
+        del missing_name["components"][0]["name"]
+        cases.append(("missing component name", missing_name))
+
+        stale_root = release_sbom()
+        stale_root["metadata"]["component"]["version"] = "0.4.1"
+        cases.append(("stale root version", stale_root))
+
+        wrong_root = release_sbom()
+        root = wrong_root["metadata"]["component"]
+        root["name"] = "not-atlas-engine"
+        root["purl"] = f"pkg:cargo/not-atlas-engine@{RELEASE_VERSION}"
+        root["bom-ref"] = root["purl"]
+        wrong_root["dependencies"][0]["ref"] = root["bom-ref"]
+        cases.append(("wrong root identity", wrong_root))
+
+        empty_components = release_sbom()
+        empty_components["components"] = []
+        cases.append(("empty components", empty_components))
+
+        empty_dependencies = release_sbom()
+        empty_dependencies["dependencies"] = []
+        cases.append(("empty dependencies", empty_dependencies))
+
+        missing_root_dependency = release_sbom()
+        missing_root_dependency["dependencies"] = missing_root_dependency["dependencies"][1:]
+        cases.append(("missing root dependency", missing_root_dependency))
+
+        nested_dependency = release_sbom()
+        nested_dependency["dependencies"][0]["dependsOn"].append(
+            f"pkg:cargo/atlas-engine@{RELEASE_VERSION}#src/main.rs"
+        )
+        cases.append(("nested binary target in dependency graph", nested_dependency))
+
+        nested_component = release_sbom()
+        nested_component["metadata"]["component"]["components"][0]["components"] = [
+            copy.deepcopy(nested_component["components"][1])
+        ]
+        cases.append(("component nested under binary target", nested_component))
+
+        for label, sbom in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory)
+                name = prepared_assets(output, sbom_document=sbom)
+                with self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                    validate_prepared_assets(output, name)
+
+    def test_prepared_assets_reject_non_cyclonedx_05_shapes_with_matching_checksums(self):
+        cases = []
+
+        metadata_authors = release_sbom()
+        metadata_authors["metadata"]["authors"] = "unexpected string"
+        cases.append(("metadata authors string", metadata_authors))
+
+        top_services = release_sbom()
+        top_services["services"] = "unexpected string"
+        cases.append(("top services string", top_services))
+
+        licenses_string = release_sbom()
+        licenses_string["components"][0]["licenses"] = "MIT"
+        cases.append(("component licenses string", licenses_string))
+
+        external_references_string = release_sbom()
+        external_references_string["components"][0]["externalReferences"] = (
+            "https://example.invalid"
+        )
+        cases.append(("external references string", external_references_string))
+
+        unknown_top_object = release_sbom()
+        unknown_top_object["unexpected"] = {"nested": "object"}
+        cases.append(("unknown top object", unknown_top_object))
+
+        for label, sbom in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory)
+                name = prepared_assets(output, sbom_document=sbom)
+                with self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                    validate_prepared_assets(output, name)
+
+    def test_prepared_assets_bind_project_owned_root_metadata_and_real_timestamp(self):
+        cases = []
+
+        gpl_license = release_sbom()
+        gpl_license["metadata"]["component"]["licenses"] = [{"expression": "GPL-3.0"}]
+        cases.append(("wrong root license", gpl_license))
+
+        wrong_sources = release_sbom()
+        wrong_sources["metadata"]["component"]["externalReferences"] = [
+            {"type": "website", "url": "https://example.invalid"},
+            {"type": "vcs", "url": "https://example.invalid"},
+        ]
+        cases.append(("wrong root external references", wrong_sources))
+
+        zero_hash = release_sbom()
+        zero_hash["components"][0]["hashes"] = [{
+            "alg": "SHA-256", "content": "0" * 64,
+        }]
+        cases.append(("zero component hash", zero_hash))
+
+        invalid_timestamp = release_sbom()
+        invalid_timestamp["metadata"]["timestamp"] = "9999-99-99T99:99:99Z"
+        cases.append(("invalid UTC timestamp", invalid_timestamp))
+
+        wrong_description = release_sbom()
+        wrong_description["metadata"]["component"]["description"] = "Wrong project"
+        cases.append(("wrong root description", wrong_description))
+
+        for label, sbom in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory)
+                name = prepared_assets(output, sbom_document=sbom)
+                with self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                    validate_prepared_assets(output, name)
+
+    def test_prepared_assets_reject_release_identity_mismatches_with_matching_checksums(self):
+        mutations = {
+            "version": ("engine_version", "0.4.1"),
+            "tag": ("tag", "v0.4.1"),
+            "target": ("target", "x86_64-apple-darwin"),
+            "source repository": ("source_repository", "https://example.invalid/repo"),
+            "source revision": ("source_revision", "c" * 40),
+            "build path": ("rustc", "prefix[/Users/runner/toolchain/rustc]"),
+        }
+        for label, (key, value) in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                release = release_identity_document()
+                release[key] = value
+                output = pathlib.Path(directory)
+                name = prepared_assets(output, release_document=release)
+                with self.assertRaisesRegex(ValueError, "release identity|release SBOM"):
+                    validate_prepared_assets(output, name)
+
+        with tempfile.TemporaryDirectory() as directory:
+            release = release_identity_document()
+            release["unexpected"] = "not allowed"
+            output = pathlib.Path(directory)
+            name = prepared_assets(output, release_document=release)
+            with self.assertRaisesRegex(ValueError, "release identity is invalid"):
+                validate_prepared_assets(output, name)
+
+    def test_prepared_assets_reject_all_zero_resealed_identities(self):
+        cases = [
+            ("source_revision", "atlas-engine:source-revision", "0" * 40),
+            ("cargo_lock_sha256", "atlas-engine:cargo-lock-sha256", "0" * 64),
+        ]
+        for release_key, property_name, zero_value in cases:
+            with self.subTest(release_key=release_key), tempfile.TemporaryDirectory() as directory:
+                release = release_identity_document()
+                release[release_key] = zero_value
+                sbom = release_sbom()
+                for prop in sbom["metadata"]["properties"]:
+                    if prop["name"] == property_name:
+                        prop["value"] = zero_value
+                        break
+                else:
+                    self.fail(f"missing synthetic property {property_name}")
+                output = pathlib.Path(directory)
+                name = prepared_assets(
+                    output, sbom_document=sbom, release_document=release,
+                )
+                with self.assertRaisesRegex(ValueError, "release identity is invalid"):
+                    validate_prepared_assets(output, name)
+
+    def test_prepared_assets_require_reserved_sbom_properties_exactly_once(self):
+        for label, mutate in [
+            ("missing", lambda props: props.pop(1)),
+            ("duplicate", lambda props: props.append(copy.deepcopy(props[1]))),
+            ("wrong", lambda props: props[2].update(value="v9.9.9")),
+        ]:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                sbom = release_sbom()
+                mutate(sbom["metadata"]["properties"])
+                output = pathlib.Path(directory)
+                name = prepared_assets(output, sbom_document=sbom)
+                with self.assertRaisesRegex(ValueError, "release SBOM is invalid"):
+                    validate_prepared_assets(output, name)
+
     def test_prepared_archive_rehearsal_verifies_members_and_sidecars(self):
         with tempfile.TemporaryDirectory() as directory:
             output = pathlib.Path(directory)

@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-analyzer"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "atlas-repo-core",
  "blake3",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "blake3",
  "cap-fs-ext",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-indexer"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "atlas-repo-core",
  "blake3",
@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-security"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "atlas-repo-core",
  "blake3",
