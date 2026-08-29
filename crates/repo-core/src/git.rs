@@ -10,10 +10,16 @@ use cap_std::fs::Dir;
 use crate::traversal::{ReadFailure, read_regular, read_relative};
 use crate::{Diagnostic, GitMetadata, normalize_relative_path};
 
+// A BTreeSet entry retains an owned String plus tree-node bookkeeping. This is a
+// deterministic conservative charge, not a measurement of allocator or RSS use.
+const TRACKED_PATH_METADATA_OVERHEAD: usize = 192;
+
 pub(crate) struct GitState {
     pub metadata: GitMetadata,
     pub tracked: Option<BTreeSet<String>>,
-    pub exclude: Option<String>,
+    pub exclude: Option<Vec<u8>>,
+    pub retained_metadata_bytes: usize,
+    pub metadata_exhausted: bool,
 }
 
 impl GitState {
@@ -31,11 +37,17 @@ impl GitState {
     }
 }
 
-pub(crate) fn inspect(root: &Dir, diagnostics: &mut Vec<Diagnostic>) -> GitState {
+pub(crate) fn inspect(
+    root: &Dir,
+    diagnostics: &mut Vec<Diagnostic>,
+    tracked_metadata_budget: usize,
+) -> GitState {
     let mut result = GitState {
         metadata: GitMetadata::default(),
         tracked: None,
         exclude: None,
+        retained_metadata_bytes: 0,
+        metadata_exhausted: false,
     };
     let git_meta = match root.symlink_metadata(".git") {
         Ok(meta) => meta,
@@ -117,10 +129,17 @@ pub(crate) fn inspect(root: &Dir, diagnostics: &mut Vec<Diagnostic>) -> GitState
             return result;
         }
     }
+    // The raw index has this independent input cap and exists transiently beside
+    // parsed paths. `tracked_metadata_budget` bounds only retained tracking state;
+    // callers still need an external RSS limit.
     match read_regular(&git, OsStr::new("index"), 16 * 1024 * 1024) {
-        Ok(bytes) => match parse_index(&bytes) {
-            Some(tracked) => result.tracked = Some(tracked),
-            None => diagnostics.push(Diagnostic::new(
+        Ok(bytes) => match parse_index(&bytes, tracked_metadata_budget) {
+            Ok(parsed) => {
+                result.tracked = Some(parsed.paths);
+                result.retained_metadata_bytes = parsed.retained_metadata_bytes;
+            }
+            Err(IndexParseError::MetadataBudget) => result.metadata_exhausted = true,
+            Err(IndexParseError::Invalid) => diagnostics.push(Diagnostic::new(
                 "git_index_unsupported",
                 None,
                 "Git tracking is unknown: index is malformed or uses an unsupported format",
@@ -133,21 +152,16 @@ pub(crate) fn inspect(root: &Dir, diagnostics: &mut Vec<Diagnostic>) -> GitState
             "Git tracking is unknown: index exceeds bounds or could not be safely read",
         )),
     }
-    match read_relative(&git, "info/exclude", 64 * 1024) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(value) => result.exclude = Some(value),
+    if !result.metadata_exhausted {
+        match read_relative(&git, "info/exclude", 64 * 1024) {
+            Ok(bytes) => result.exclude = Some(bytes),
+            Err(ReadFailure::NotFound) => {}
             Err(_) => diagnostics.push(Diagnostic::new(
-                "ignore_invalid",
+                "git_exclude_unavailable",
                 Some(".git/info/exclude"),
-                "Git exclude rules are not UTF-8",
+                "Git exclude rules exceed bounds or could not be safely read",
             )),
-        },
-        Err(ReadFailure::NotFound) => {}
-        Err(_) => diagnostics.push(Diagnostic::new(
-            "git_exclude_unavailable",
-            Some(".git/info/exclude"),
-            "Git exclude rules exceed bounds or could not be safely read",
-        )),
+        }
     }
     result
 }
@@ -191,79 +205,138 @@ fn packed_reference(bytes: &[u8], reference: &str) -> Option<String> {
 /// Read ordinary SHA-1 index v2/v3 entries only. The index is untrusted advisory
 /// working-tree metadata, not proof of a commit or verified object ownership.
 /// Required extensions (split/sparse), v4 and SHA-256 layouts fail closed.
-fn parse_index(bytes: &[u8]) -> Option<BTreeSet<String>> {
-    if bytes.len() < 32 || bytes.get(..4)? != b"DIRC" {
-        return None;
+struct ParsedIndex {
+    paths: BTreeSet<String>,
+    retained_metadata_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IndexParseError {
+    Invalid,
+    MetadataBudget,
+}
+
+fn parse_index(bytes: &[u8], metadata_budget: usize) -> Result<ParsedIndex, IndexParseError> {
+    let invalid = || IndexParseError::Invalid;
+    if bytes.len() < 32 || bytes.get(..4) != Some(b"DIRC".as_slice()) {
+        return Err(IndexParseError::Invalid);
     }
-    let u32_at = |offset: usize| -> Option<u32> {
-        Some(u32::from_be_bytes(
-            bytes.get(offset..offset + 4)?.try_into().ok()?,
+    let u32_at = |offset: usize| -> Result<u32, IndexParseError> {
+        Ok(u32::from_be_bytes(
+            bytes
+                .get(offset..offset + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .map_err(|_| invalid())?,
         ))
     };
     let version = u32_at(4)?;
     if !matches!(version, 2 | 3) {
-        return None;
+        return Err(IndexParseError::Invalid);
     }
     let count = u32_at(8)? as usize;
     if count > 1_000_000 || count > (bytes.len() - 32) / 64 {
-        return None;
+        return Err(IndexParseError::Invalid);
     }
     let data_end = bytes.len() - 20;
     let mut offset: usize = 12;
     let mut paths = BTreeSet::new();
+    let mut retained_metadata_bytes = 0usize;
     for _ in 0..count {
         let start = offset;
         let mode = u32_at(offset + 24)?;
         // Sparse directory entries need expansion against Git objects. This
         // implementation deliberately does not interpret those objects.
         if mode & 0o170000 == 0o040000 {
-            return None;
+            return Err(IndexParseError::Invalid);
         }
-        let flags = u16::from_be_bytes(bytes.get(offset + 60..offset + 62)?.try_into().ok()?);
+        let flags = u16::from_be_bytes(
+            bytes
+                .get(offset + 60..offset + 62)
+                .ok_or_else(invalid)?
+                .try_into()
+                .map_err(|_| invalid())?,
+        );
         offset += 62;
         if flags & 0x4000 != 0 {
             if version < 3 {
-                return None;
+                return Err(IndexParseError::Invalid);
             }
-            let extra = u16::from_be_bytes(bytes.get(offset..offset + 2)?.try_into().ok()?);
+            let extra = u16::from_be_bytes(
+                bytes
+                    .get(offset..offset + 2)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .map_err(|_| invalid())?,
+            );
             if extra & !0x6000 != 0 {
-                return None;
+                return Err(IndexParseError::Invalid);
             }
             offset += 2;
         }
-        let max_end = offset.checked_add(4097)?.min(data_end);
-        let path_len = bytes.get(offset..max_end)?.iter().position(|&b| b == 0)?;
+        let max_end = offset.checked_add(4097).ok_or_else(invalid)?.min(data_end);
+        let path_len = bytes
+            .get(offset..max_end)
+            .ok_or_else(invalid)?
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(invalid)?;
         if flags & 0x0fff != 0x0fff && usize::from(flags & 0x0fff) != path_len {
-            return None;
+            return Err(IndexParseError::Invalid);
         }
-        let path = std::str::from_utf8(bytes.get(offset..offset + path_len)?).ok()?;
+        let path = std::str::from_utf8(bytes.get(offset..offset + path_len).ok_or_else(invalid)?)
+            .map_err(|_| invalid())?;
         if path == ".git"
             || path.starts_with(".git/")
-            || normalize_relative_path(Path::new(path)).ok()? != path
+            || normalize_relative_path(Path::new(path)).map_err(|_| invalid())? != path
         {
-            return None;
+            return Err(IndexParseError::Invalid);
         }
-        paths.insert(path.to_owned());
+        if !paths.contains(path) {
+            let retained = TRACKED_PATH_METADATA_OVERHEAD.saturating_add(path.len());
+            if retained > metadata_budget.saturating_sub(retained_metadata_bytes) {
+                return Err(IndexParseError::MetadataBudget);
+            }
+            paths.insert(path.to_owned());
+            retained_metadata_bytes += retained;
+        }
         let unpadded_end = offset + path_len + 1;
-        offset = start.checked_add((unpadded_end - start).checked_add(7)? & !7)?;
-        if offset > data_end || bytes.get(unpadded_end..offset)?.iter().any(|&b| b != 0) {
-            return None;
+        offset = start
+            .checked_add((unpadded_end - start).checked_add(7).ok_or_else(invalid)? & !7)
+            .ok_or_else(invalid)?;
+        if offset > data_end
+            || bytes
+                .get(unpadded_end..offset)
+                .ok_or_else(invalid)?
+                .iter()
+                .any(|&b| b != 0)
+        {
+            return Err(IndexParseError::Invalid);
         }
     }
     while offset < data_end {
-        let header = bytes.get(offset..offset + 8)?;
+        let header = bytes.get(offset..offset + 8).ok_or_else(invalid)?;
         // Lowercase first-byte extensions are mandatory; unknown semantics must
         // not be misreported as a complete inventory of tracked files.
         if !header[0].is_ascii_uppercase() || !header[..4].iter().all(u8::is_ascii_alphanumeric) {
-            return None;
+            return Err(IndexParseError::Invalid);
         }
-        let length = u32::from_be_bytes(header[4..8].try_into().ok()?) as usize;
-        offset = offset.checked_add(8)?.checked_add(length)?;
+        let length = u32::from_be_bytes(header[4..8].try_into().map_err(|_| invalid())?) as usize;
+        offset = offset
+            .checked_add(8)
+            .and_then(|offset| offset.checked_add(length))
+            .ok_or_else(invalid)?;
         if offset > data_end {
-            return None;
+            return Err(IndexParseError::Invalid);
         }
     }
-    (offset == data_end).then_some(paths)
+    if offset != data_end {
+        return Err(IndexParseError::Invalid);
+    }
+    Ok(ParsedIndex {
+        paths,
+        retained_metadata_bytes,
+    })
 }
 
 #[cfg(test)]
@@ -291,24 +364,58 @@ mod tests {
     #[test]
     fn recognizes_basic_index_and_rejects_required_extensions() {
         let mut data = index(&[".env", "src/main.py"]);
-        assert_eq!(parse_index(&data).unwrap().len(), 2);
+        let parsed = parse_index(&data, usize::MAX).unwrap();
+        assert_eq!(parsed.paths.len(), 2);
+        assert_eq!(
+            parsed.retained_metadata_bytes,
+            2 * TRACKED_PATH_METADATA_OVERHEAD + ".env".len() + "src/main.py".len()
+        );
         data.truncate(data.len() - 20);
         data.extend_from_slice(b"link\0\0\0\0");
         data.extend_from_slice(&[0; 20]);
-        assert!(parse_index(&data).is_none());
+        assert!(matches!(
+            parse_index(&data, usize::MAX),
+            Err(IndexParseError::Invalid)
+        ));
         let mut sparse = index(&["directory"]);
         sparse[36..40].copy_from_slice(&0o040000_u32.to_be_bytes());
-        assert!(parse_index(&sparse).is_none());
+        assert!(matches!(
+            parse_index(&sparse, usize::MAX),
+            Err(IndexParseError::Invalid)
+        ));
+    }
+
+    #[test]
+    fn tracked_paths_obey_the_retained_metadata_budget() {
+        let data = index(&[".env", "src/main.py"]);
+        let exact = 2 * TRACKED_PATH_METADATA_OVERHEAD + ".env".len() + "src/main.py".len();
+        assert_eq!(
+            parse_index(&data, exact).unwrap().retained_metadata_bytes,
+            exact
+        );
+        assert!(matches!(
+            parse_index(&data, exact - 1),
+            Err(IndexParseError::MetadataBudget)
+        ));
     }
 
     #[test]
     fn invalid_paths_and_truncation_never_become_tracked() {
         for path in ["../outside", "/absolute", "a\\b", ".git/config", "a/../b"] {
-            assert!(parse_index(&index(&[path])).is_none(), "{path}");
+            assert!(
+                matches!(
+                    parse_index(&index(&[path]), usize::MAX),
+                    Err(IndexParseError::Invalid)
+                ),
+                "{path}"
+            );
         }
         let data = index(&["safe.py"]);
         for end in 0..data.len() {
-            assert!(parse_index(&data[..end]).is_none());
+            assert!(matches!(
+                parse_index(&data[..end], usize::MAX),
+                Err(IndexParseError::Invalid)
+            ));
         }
     }
 

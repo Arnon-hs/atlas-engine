@@ -10,8 +10,8 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
 use crate::git::{self, GitState};
 use crate::{
-    CoreError, Diagnostic, FileRecord, RepositoryMetadata, ScanOptions, TrackingState, classify,
-    content_hash, normalize_relative_path,
+    CoreError, Diagnostic, FileRecord, MAX_METADATA_BYTES, MIN_METADATA_BYTES, RepositoryMetadata,
+    ScanOptions, TrackingState, classify, content_hash, normalize_relative_path,
 };
 
 const MAX_DIAGNOSTICS: usize = 1024;
@@ -19,6 +19,21 @@ const MAX_DIRECTORY_ENTRIES: usize = 100_000;
 const MAX_IGNORE_BYTES: u64 = 64 * 1024;
 const MAX_TOTAL_IGNORE_BYTES: usize = 1024 * 1024;
 const MAX_IGNORE_PATTERNS: usize = 8192;
+// These deterministic charges are conservative retention estimates, not RSS
+// measurements. Variable-width strings are charged separately at their byte length.
+const FILE_RECORD_METADATA_OVERHEAD: usize = 256;
+const DIAGNOSTIC_METADATA_OVERHEAD: usize = 192;
+const CALLER_CONFIGURATION_METADATA_OVERHEAD: usize = 64;
+const CALLER_EXCLUDE_METADATA_OVERHEAD: usize = 128;
+const CALLER_REPOSITORY_ID_METADATA_OVERHEAD: usize = 64;
+const IGNORE_FINGERPRINT_METADATA_OVERHEAD: usize = 96;
+const IGNORE_SCOPE_METADATA_OVERHEAD: usize = 256;
+const IGNORE_PATTERN_METADATA_OVERHEAD: usize = 128;
+const METADATA_BUDGET_CODE: &str = "metadata_budget";
+const METADATA_BUDGET_MESSAGE: &str =
+    "Inventory metadata byte budget reached; remaining entries were not admitted";
+const METADATA_BUDGET_DIAGNOSTIC_BYTES: usize =
+    DIAGNOSTIC_METADATA_OVERHEAD + METADATA_BUDGET_CODE.len() + METADATA_BUDGET_MESSAGE.len();
 
 /// A scan inventory plus an open directory capability. No absolute path is kept
 /// in its public model, diagnostics, or Debug representation.
@@ -27,6 +42,10 @@ pub struct Repository {
     pub diagnostics: Vec<Diagnostic>,
     pub metadata: RepositoryMetadata,
     pub options: ScanOptions,
+    /// BLAKE3 identity of the relative paths and bytes of ignore metadata read
+    /// during this inventory. Incomplete metadata diagnostics must still be
+    /// rejected by callers; this is not a completeness or source-content proof.
+    pub selection_fingerprint: String,
     root: Arc<Dir>,
 }
 
@@ -44,29 +63,74 @@ impl std::fmt::Debug for Repository {
 impl Repository {
     pub fn open(path: impl AsRef<Path>, options: ScanOptions) -> Result<Self, CoreError> {
         validate_options(&options)?;
+        let caller_metadata_bytes = caller_configuration_metadata_bytes(&options);
+        if caller_metadata_bytes
+            > options
+                .max_metadata_bytes
+                .saturating_sub(METADATA_BUDGET_DIAGNOSTIC_BYTES)
+        {
+            return Err(CoreError::Configuration(
+                "max_metadata_bytes is too small for retained caller configuration".into(),
+            ));
+        }
         let root = Arc::new(open_root(path.as_ref())?);
-        let mut diagnostics = Vec::new();
-        let git = git::inspect(&root, &mut diagnostics);
+        let mut initial_diagnostics = Vec::new();
+        let git_metadata_budget = options
+            .max_metadata_bytes
+            .saturating_sub(METADATA_BUDGET_DIAGNOSTIC_BYTES)
+            .saturating_sub(caller_metadata_bytes);
+        let mut git = git::inspect(&root, &mut initial_diagnostics, git_metadata_budget);
+        let git_metadata_exhausted = git.metadata_exhausted;
+        // The raw exclude bytes are needed only to derive the fingerprint and
+        // matcher. Move them out so they are dropped before the repository walk.
+        let git_exclude = git.exclude.take();
         let excludes = compile_patterns("", options.excludes.iter().map(String::as_str))
             .map_err(|_| CoreError::Configuration("invalid exclusion pattern".into()))?;
         let mut state = WalkState {
             options: &options,
             git: &git,
             files: Vec::new(),
-            diagnostics,
+            diagnostics: Vec::new(),
             excludes,
             entries: 0,
             read_bytes: 0,
             ignore_bytes: 0,
             ignore_patterns: 0,
+            ignore_metadata: Vec::new(),
+            // Reserve the terminal signal up front so the budget cannot hide
+            // its own exhaustion and accidentally look like a complete scan.
+            metadata_bytes: METADATA_BUDGET_DIAGNOSTIC_BYTES
+                .saturating_add(caller_metadata_bytes)
+                .saturating_add(git.retained_metadata_bytes),
+            metadata_exhausted: false,
             stopped: false,
             suppressed: 0,
         };
-        let mut scopes = Vec::new();
-        if let Some(exclude) = &git.exclude {
-            state.ignore_bytes += exclude.len();
-            state.add_ignore_scope("", ".git/info/exclude", exclude, &mut scopes);
+        for diagnostic in initial_diagnostics {
+            state.diagnostic(diagnostic);
+            if state.stopped {
+                break;
+            }
         }
+        if git_metadata_exhausted {
+            state.exhaust_metadata();
+        }
+        let mut scopes = Vec::new();
+        if !state.stopped
+            && let Some(exclude) = git_exclude.as_deref()
+        {
+            state.ignore_bytes += exclude.len();
+            state.record_ignore_metadata(".git/info/exclude", exclude);
+            match std::str::from_utf8(exclude) {
+                Ok(source) => state.add_ignore_scope("", ".git/info/exclude", source, &mut scopes),
+                Err(_) => state.diagnostic(Diagnostic::new(
+                    "ignore_invalid",
+                    Some(".git/info/exclude"),
+                    "Git exclude rules are not UTF-8",
+                )),
+            }
+        }
+        drop(git_exclude);
         state.walk(&root, "", 0, &mut scopes, false);
         state
             .files
@@ -78,6 +142,7 @@ impl Repository {
         });
         let files = std::mem::take(&mut state.files);
         let diagnostics = std::mem::take(&mut state.diagnostics);
+        let selection_fingerprint = selection_fingerprint(&mut state.ignore_metadata);
         drop(state);
         Ok(Self {
             files,
@@ -87,6 +152,7 @@ impl Repository {
                 git: git.metadata,
             },
             options,
+            selection_fingerprint,
             root,
         })
     }
@@ -133,6 +199,22 @@ impl Repository {
     }
 }
 
+fn caller_configuration_metadata_bytes(options: &ScanOptions) -> usize {
+    let excludes = options.excludes.iter().fold(0usize, |total, pattern| {
+        total
+            .saturating_add(CALLER_EXCLUDE_METADATA_OVERHEAD)
+            // The caller String remains in ScanOptions while the compiled
+            // matcher retains its own pattern representation during traversal.
+            .saturating_add(pattern.len().saturating_mul(2))
+    });
+    let repository_id = options.repository_id.as_deref().map_or(0, |id| {
+        CALLER_REPOSITORY_ID_METADATA_OVERHEAD.saturating_add(id.len().saturating_mul(2))
+    });
+    CALLER_CONFIGURATION_METADATA_OVERHEAD
+        .saturating_add(excludes)
+        .saturating_add(repository_id)
+}
+
 fn validate_options(options: &ScanOptions) -> Result<(), CoreError> {
     let invalid = |message: &str| CoreError::Configuration(message.into());
     if !(1..=64 * 1024 * 1024).contains(&options.max_file_size) {
@@ -143,6 +225,11 @@ fn validate_options(options: &ScanOptions) -> Result<(), CoreError> {
     }
     if !(1..=64 * 1024 * 1024 * 1024).contains(&options.max_total_bytes) {
         return Err(invalid("max_total_bytes must be between 1 byte and 64 GiB"));
+    }
+    if !(MIN_METADATA_BYTES..=MAX_METADATA_BYTES).contains(&options.max_metadata_bytes) {
+        return Err(invalid(
+            "max_metadata_bytes must be between 1 KiB and 1 GiB",
+        ));
     }
     if !(1..=256).contains(&options.max_depth) {
         return Err(invalid("max_depth must be between 1 and 256"));
@@ -311,6 +398,20 @@ fn compile_patterns<'a>(root: &str, lines: impl Iterator<Item = &'a str>) -> Res
     builder.build().map_err(|_| ())
 }
 
+fn selection_fingerprint(records: &mut [(String, blake3::Hash)]) -> String {
+    records.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut hash = blake3::Hasher::new_derive_key("atlas-engine.repository-selection.v1");
+    hash.update(&(records.len() as u64).to_le_bytes());
+    for (path, digest) in records {
+        hash.update(&(path.len() as u64).to_le_bytes());
+        hash.update(path.as_bytes());
+        // BLAKE3 digests have a fixed 32-byte width. Paths are length-prefixed
+        // and the record count is explicit, so field boundaries are unambiguous.
+        hash.update(digest.as_bytes());
+    }
+    hash.finalize().to_hex().to_string()
+}
+
 struct WalkState<'a> {
     options: &'a ScanOptions,
     git: &'a GitState,
@@ -321,14 +422,77 @@ struct WalkState<'a> {
     read_bytes: u64,
     ignore_bytes: usize,
     ignore_patterns: usize,
+    ignore_metadata: Vec<(String, blake3::Hash)>,
+    metadata_bytes: usize,
+    metadata_exhausted: bool,
     stopped: bool,
     suppressed: usize,
 }
 
 impl WalkState<'_> {
-    fn diagnostic(&mut self, diagnostic: Diagnostic) {
-        if self.diagnostics.len() < MAX_DIAGNOSTICS - 1 {
+    fn reserve_metadata(&mut self, bytes: usize) -> bool {
+        let available = self
+            .options
+            .max_metadata_bytes
+            .saturating_sub(self.metadata_bytes);
+        if bytes > available {
+            self.exhaust_metadata();
+            false
+        } else {
+            self.metadata_bytes += bytes;
+            true
+        }
+    }
+
+    fn release_metadata(&mut self, bytes: usize) {
+        self.metadata_bytes = self
+            .metadata_bytes
+            .saturating_sub(bytes)
+            .max(METADATA_BUDGET_DIAGNOSTIC_BYTES);
+    }
+
+    fn exhaust_metadata(&mut self) {
+        if self.metadata_exhausted {
+            return;
+        }
+        self.metadata_exhausted = true;
+        self.stopped = true;
+        let diagnostic = Diagnostic::new(METADATA_BUDGET_CODE, None, METADATA_BUDGET_MESSAGE);
+        if self.diagnostics.len() < MAX_DIAGNOSTICS {
             self.diagnostics.push(diagnostic);
+        } else {
+            self.diagnostics[MAX_DIAGNOSTICS - 1] = diagnostic;
+        }
+    }
+
+    fn record_ignore_metadata(&mut self, path: &str, bytes: &[u8]) {
+        // Empty files consume no byte/line budget. Bound their fingerprint
+        // retention with the existing metadata pattern limit as well.
+        if self.ignore_metadata.len() == MAX_IGNORE_PATTERNS {
+            self.diagnostic(Diagnostic::new(
+                "ignore_limit",
+                Some(path),
+                "Ignore metadata scope budget reached; selection identity is incomplete",
+            ));
+            return;
+        }
+        let retained_bytes = IGNORE_FINGERPRINT_METADATA_OVERHEAD.saturating_add(path.len());
+        if !self.reserve_metadata(retained_bytes) {
+            return;
+        }
+        self.ignore_metadata
+            .push((path.to_owned(), blake3::hash(bytes)));
+    }
+
+    fn diagnostic(&mut self, diagnostic: Diagnostic) {
+        if self.metadata_exhausted {
+            return;
+        }
+        if self.diagnostics.len() < MAX_DIAGNOSTICS - 1 {
+            let retained_bytes = diagnostic_metadata_bytes(&diagnostic);
+            if self.reserve_metadata(retained_bytes) {
+                self.diagnostics.push(diagnostic);
+            }
         } else {
             self.suppressed += 1;
             let limited = Diagnostic::new(
@@ -340,9 +504,19 @@ impl WalkState<'_> {
                 ),
             );
             if self.diagnostics.len() == MAX_DIAGNOSTICS - 1 {
-                self.diagnostics.push(limited)
+                let retained_bytes = diagnostic_metadata_bytes(&limited);
+                if self.reserve_metadata(retained_bytes) {
+                    self.diagnostics.push(limited)
+                }
             } else {
-                self.diagnostics[MAX_DIAGNOSTICS - 1] = limited
+                let old_bytes = diagnostic_metadata_bytes(&self.diagnostics[MAX_DIAGNOSTICS - 1]);
+                let new_bytes = diagnostic_metadata_bytes(&limited);
+                if new_bytes <= old_bytes {
+                    self.release_metadata(old_bytes - new_bytes);
+                    self.diagnostics[MAX_DIAGNOSTICS - 1] = limited;
+                } else if self.reserve_metadata(new_bytes - old_bytes) {
+                    self.diagnostics[MAX_DIAGNOSTICS - 1] = limited;
+                }
             }
         }
     }
@@ -354,6 +528,9 @@ impl WalkState<'_> {
         source: &str,
         scopes: &mut Vec<Gitignore>,
     ) {
+        if self.stopped {
+            return;
+        }
         let count = source.lines().count();
         if source.len() > MAX_IGNORE_BYTES as usize
             || self.ignore_patterns + count > MAX_IGNORE_PATTERNS
@@ -366,9 +543,16 @@ impl WalkState<'_> {
             ));
             return;
         }
-        self.ignore_patterns += count;
         match compile_patterns(prefix, source.lines()) {
-            Ok(matcher) => scopes.push(matcher),
+            Ok(matcher) => {
+                self.ignore_patterns += count;
+                let retained_bytes = IGNORE_SCOPE_METADATA_OVERHEAD
+                    .saturating_add(source.len())
+                    .saturating_add(count.saturating_mul(IGNORE_PATTERN_METADATA_OVERHEAD));
+                if self.reserve_metadata(retained_bytes) {
+                    scopes.push(matcher);
+                }
+            }
             Err(()) => self.diagnostic(Diagnostic::new(
                 "ignore_invalid",
                 Some(path),
@@ -416,16 +600,23 @@ impl WalkState<'_> {
             Err(error) => Err(io_failure(error)),
         };
         match ignore_read {
-            Ok(bytes) => match std::str::from_utf8(&bytes) {
-                Ok(source) => self.add_ignore_scope(prefix, &ignore_path, source, scopes),
-                Err(_) => self.diagnostic(Diagnostic::new(
-                    "ignore_invalid",
-                    Some(&ignore_path),
-                    "Ignore rules are not valid UTF-8",
-                )),
-            },
+            Ok(bytes) => {
+                self.record_ignore_metadata(&ignore_path, &bytes);
+                match std::str::from_utf8(&bytes) {
+                    Ok(source) => self.add_ignore_scope(prefix, &ignore_path, source, scopes),
+                    Err(_) => self.diagnostic(Diagnostic::new(
+                        "ignore_invalid",
+                        Some(&ignore_path),
+                        "Ignore rules are not valid UTF-8",
+                    )),
+                }
+            }
             Err(ReadFailure::NotFound) => {}
             Err(error) => self.diagnostic(error.diagnostic(Some(&ignore_path))),
+        }
+        if self.stopped {
+            scopes.truncate(scope_count);
+            return;
         }
         let entries = match dir.entries() {
             Ok(entries) => entries,
@@ -479,19 +670,22 @@ impl WalkState<'_> {
                 ));
                 continue;
             };
-            let relative = if prefix.is_empty() {
+            let candidate = if prefix.is_empty() {
                 name_str.to_owned()
             } else {
                 format!("{prefix}/{name_str}")
             };
-            if normalize_relative_path(Path::new(&relative)).is_err() {
-                self.diagnostic(Diagnostic::new(
-                    "path_rejected",
-                    None,
-                    "A filename outside the portable path model was skipped",
-                ));
-                continue;
-            }
+            let relative = match normalize_relative_path(Path::new(&candidate)) {
+                Ok(relative) => relative,
+                Err(_) => {
+                    self.diagnostic(Diagnostic::new(
+                        "path_rejected",
+                        None,
+                        "A filename outside the portable path model was skipped",
+                    ));
+                    continue;
+                }
+            };
             let meta = match dir.symlink_metadata(&name) {
                 Ok(meta) => meta,
                 Err(_) => {
@@ -606,6 +800,10 @@ impl WalkState<'_> {
                 ));
                 continue;
             }
+            let retained_bytes = FILE_RECORD_METADATA_OVERHEAD.saturating_add(relative.len());
+            if !self.reserve_metadata(retained_bytes) {
+                break;
+            }
             // Charge attempted reads, not only successful records, so a mutating
             // input cannot force unlimited repeated failed reads.
             self.read_bytes += meta.len();
@@ -624,6 +822,9 @@ impl WalkState<'_> {
                             Some(&relative),
                             "Binary content is retained only in the file inventory",
                         ));
+                    }
+                    if self.stopped {
+                        break;
                     }
                     let tracking =
                         self.git
@@ -648,9 +849,19 @@ impl WalkState<'_> {
                         tracking,
                     });
                 }
-                Err(error) => self.diagnostic(error.diagnostic(Some(&relative))),
+                Err(error) => {
+                    self.release_metadata(retained_bytes);
+                    self.diagnostic(error.diagnostic(Some(&relative)));
+                }
             }
         }
         scopes.truncate(scope_count);
     }
+}
+
+fn diagnostic_metadata_bytes(diagnostic: &Diagnostic) -> usize {
+    DIAGNOSTIC_METADATA_OVERHEAD
+        .saturating_add(diagnostic.code.len())
+        .saturating_add(diagnostic.message.len())
+        .saturating_add(diagnostic.relative_path.as_deref().map_or(0, str::len))
 }

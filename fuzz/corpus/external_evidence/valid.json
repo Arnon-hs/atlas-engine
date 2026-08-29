@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "bf2e941013461916d955a422ef8aa0fe7bbe5f6cfc94aa0ffe41723465695249",
+  "subject": {
+    "repository_id": "fixture/complete-zizmor",
+    "commit_sha": "1111111111111111111111111111111111111111",
+    "snapshot_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "configuration_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "selection_id": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "producer": {
+    "runner_name": "atlas-security-runner",
+    "runner_version": "0.1.0",
+    "runner_binary_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "tool_name": "zizmor",
+    "tool_version": "1.21.0",
+    "tool_binary_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "domain": "cicd",
+  "materials": [
+    {
+      "kind": "configuration",
+      "state": "present",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "kind": "database",
+      "state": "not_applicable",
+      "sha256": null
+    },
+    {
+      "kind": "ruleset",
+      "state": "not_applicable",
+      "sha256": null
+    }
+  ],
+  "scope": {
+    "include_patterns": [
+      ".github/workflows/**"
+    ],
+    "exclude_patterns": [],
+    "languages": [
+      "github-actions"
+    ],
+    "selected_files": 4,
+    "evaluated_files": 4
+  },
+  "execution": {
+    "status": "complete",
+    "termination_reason": "success",
+    "exit_code": 0,
+    "network_access": "denied",
+    "repository_access": "read_only",
+    "repository_code_executed": false
+  },
+  "result": {
+    "state": "present",
+    "format": "sarif-2.1.0",
+    "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "size_bytes": 1024,
+    "finding_count": 0,
+    "findings_by_severity": {
+      "info": 0,
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  }
+}

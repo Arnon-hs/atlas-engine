@@ -13,6 +13,12 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(redacted.content.len(), source.len());
     assert_eq!(redacted.redacted, !found.is_empty());
     assert_eq!(redacted.redaction_count, found.len());
+    assert_eq!(
+        redacted.redaction_complete,
+        found
+            .iter()
+            .all(|matched| matched.rule_id != "secret.scan_limit")
+    );
     for (original, replacement) in source.bytes().zip(redacted.content.bytes()) {
         if matches!(original, b'\n' | b'\r') {
             assert_eq!(original, replacement);

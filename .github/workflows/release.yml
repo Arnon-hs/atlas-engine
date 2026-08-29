@@ -35,6 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Release validation is offline and requires this trusted remote-main ref
+          # to prove that the tag commit belongs to the reviewed source line.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate release identity
         run: python3 scripts/prepare_release.py --validate-only

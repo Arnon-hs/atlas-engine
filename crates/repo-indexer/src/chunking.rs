@@ -4,7 +4,7 @@ use std::path::Path;
 
 use repo_core::{
     Diagnostic, ENGINE_VERSION, Language, ParserRegistry, SCHEMA_VERSION, Symbol, detect_secrets,
-    normalize_relative_path, redact_secrets,
+    is_unsafe_display_char, normalize_relative_path, redact_secrets,
 };
 
 use crate::{ChunkKind, FileIndex, IndexError, IndexOptions, IndexRecord, MAX_RECORDS_PER_FILE};
@@ -202,7 +202,7 @@ pub fn chunk_source(
     let relative_path = normalized.as_str();
     if repository_id.is_some_and(|value| {
         value.len() > 1024
-            || value.chars().any(char::is_control)
+            || value.chars().any(is_unsafe_display_char)
             || !detect_secrets(value).is_empty()
     }) {
         return Err(IndexError::Configuration(

@@ -1,0 +1,6 @@
+{
+  "name": "atlas-engine/surface-fixture",
+  "scripts": {
+    "post-install-cmd": "FIXTURE_ONLY_DO_NOT_EXECUTE"
+  }
+}

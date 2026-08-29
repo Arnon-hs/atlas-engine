@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "af590fe8971a28880e8633397ef7ad79924687a1be627ca760eb44f1df931e64",
+  "subject": {
+    "repository_id": "fixture/failed-osv",
+    "commit_sha": null,
+    "snapshot_id": "4444444444444444444444444444444444444444444444444444444444444444",
+    "configuration_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "selection_id": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "producer": {
+    "runner_name": "atlas-security-runner",
+    "runner_version": "0.1.0",
+    "runner_binary_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "tool_name": "osv-scanner",
+    "tool_version": "2.0.0",
+    "tool_binary_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  "domain": "dependency_vulnerability",
+  "materials": [
+    {
+      "kind": "configuration",
+      "state": "present",
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "kind": "database",
+      "state": "present",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "kind": "ruleset",
+      "state": "not_applicable",
+      "sha256": null
+    }
+  ],
+  "scope": {
+    "include_patterns": [
+      "**/Cargo.lock",
+      "**/composer.lock",
+      "**/package-lock.json"
+    ],
+    "exclude_patterns": [],
+    "languages": [
+      "cargo",
+      "composer",
+      "npm"
+    ],
+    "selected_files": null,
+    "evaluated_files": null
+  },
+  "execution": {
+    "status": "failed",
+    "termination_reason": "sandbox_violation",
+    "exit_code": null,
+    "network_access": "denied",
+    "repository_access": "read_only",
+    "repository_code_executed": false
+  },
+  "result": {
+    "state": "absent",
+    "format": null,
+    "sha256": null,
+    "size_bytes": null,
+    "finding_count": null,
+    "findings_by_severity": null
+  }
+}

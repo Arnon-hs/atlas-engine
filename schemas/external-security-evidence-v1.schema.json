@@ -1,0 +1,647 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/external-security-evidence-v1.schema.json",
+  "title": "Atlas Engine external security evidence v1",
+  "description": "Bounded metadata for a consumer-run external security tool. The manifest contains no raw findings, messages, snippets, commands, environment variables or artifact contents. Runtime validation additionally enforces ordering, safe metadata, cross-field invariants, subject binding and the canonical evidence_id.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "subject",
+    "producer",
+    "domain",
+    "materials",
+    "scope",
+    "execution",
+    "result"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/hash64"
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "producer": {
+      "$ref": "#/$defs/producer"
+    },
+    "domain": {
+      "enum": [
+        "sast",
+        "secrets",
+        "dependency_vulnerability",
+        "cicd",
+        "container_iac",
+        "malware"
+      ]
+    },
+    "materials": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/material"
+      }
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "execution": {
+      "$ref": "#/$defs/execution"
+    },
+    "result": {
+      "$ref": "#/$defs/result"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "execution"
+        ]
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "termination_reason": {
+                "const": "success"
+              },
+              "exit_code": {
+                "const": 0
+              }
+            }
+          },
+          "scope": {
+            "properties": {
+              "selected_files": {
+                "type": "integer"
+              },
+              "evaluated_files": {
+                "type": "integer"
+              }
+            }
+          },
+          "result": {
+            "properties": {
+              "state": {
+                "const": "present"
+              },
+              "format": {
+                "$ref": "#/$defs/formatToken"
+              },
+              "sha256": {
+                "$ref": "#/$defs/hash64"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 67108864
+              },
+              "finding_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000000
+              },
+              "findings_by_severity": {
+                "$ref": "#/$defs/findingCounts"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "execution"
+        ]
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "termination_reason": {
+                "$ref": "#/$defs/nonSuccessReason"
+              }
+            }
+          },
+          "result": {
+            "properties": {
+              "state": {
+                "const": "present"
+              },
+              "format": {
+                "$ref": "#/$defs/formatToken"
+              },
+              "sha256": {
+                "$ref": "#/$defs/hash64"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 67108864
+              },
+              "finding_count": {
+                "type": "null"
+              },
+              "findings_by_severity": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "execution"
+        ]
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "termination_reason": {
+                "$ref": "#/$defs/nonSuccessReason"
+              }
+            }
+          },
+          "result": {
+            "properties": {
+              "state": {
+                "const": "absent"
+              },
+              "format": {
+                "type": "null"
+              },
+              "sha256": {
+                "type": "null"
+              },
+              "size_bytes": {
+                "type": "null"
+              },
+              "finding_count": {
+                "type": "null"
+              },
+              "findings_by_severity": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "nullableHash64": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/hash64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "token128": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+@-]*$"
+    },
+    "formatToken": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+@-]*$"
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "repository_id",
+        "commit_sha",
+        "snapshot_id",
+        "configuration_id",
+        "selection_id"
+      ],
+      "properties": {
+        "repository_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!/|[A-Za-z]:)(?!.*:/)(?!.*\\\\)[^\\s\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+$"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "not": {
+                "enum": [
+                  "0000000000000000000000000000000000000000",
+                  "0000000000000000000000000000000000000000000000000000000000000000"
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_id": {
+          "$ref": "#/$defs/hash64"
+        },
+        "configuration_id": {
+          "$ref": "#/$defs/hash64"
+        },
+        "selection_id": {
+          "$ref": "#/$defs/hash64"
+        }
+      },
+      "additionalProperties": false
+    },
+    "producer": {
+      "type": "object",
+      "required": [
+        "runner_name",
+        "runner_version",
+        "runner_binary_sha256",
+        "tool_name",
+        "tool_version",
+        "tool_binary_sha256"
+      ],
+      "properties": {
+        "runner_name": {
+          "$ref": "#/$defs/token128"
+        },
+        "runner_version": {
+          "$ref": "#/$defs/token128"
+        },
+        "runner_binary_sha256": {
+          "$ref": "#/$defs/hash64"
+        },
+        "tool_name": {
+          "$ref": "#/$defs/token128"
+        },
+        "tool_version": {
+          "$ref": "#/$defs/token128"
+        },
+        "tool_binary_sha256": {
+          "$ref": "#/$defs/hash64"
+        }
+      },
+      "additionalProperties": false
+    },
+    "material": {
+      "type": "object",
+      "required": [
+        "kind",
+        "state",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "configuration",
+            "database",
+            "ruleset"
+          ]
+        },
+        "state": {
+          "enum": [
+            "present",
+            "not_applicable",
+            "not_reported"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/nullableHash64"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "present"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "sha256": {
+                "$ref": "#/$defs/hash64"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "sha256": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "include_patterns",
+        "exclude_patterns",
+        "languages",
+        "selected_files",
+        "evaluated_files"
+      ],
+      "properties": {
+        "include_patterns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "exclude_patterns": {
+          "type": "array",
+          "maxItems": 1024,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "languages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+@-]*$"
+          }
+        },
+        "selected_files": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluated_files": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "status",
+        "termination_reason",
+        "exit_code",
+        "network_access",
+        "repository_access",
+        "repository_code_executed"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "failed"
+          ]
+        },
+        "termination_reason": {
+          "enum": [
+            "success",
+            "tool_exit_nonzero",
+            "timeout",
+            "cpu_limit",
+            "memory_limit",
+            "output_limit",
+            "sandbox_violation",
+            "parse_failure",
+            "unsupported",
+            "cancelled",
+            "internal_error"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_access": {
+          "const": "denied"
+        },
+        "repository_access": {
+          "const": "read_only"
+        },
+        "repository_code_executed": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "state",
+        "format",
+        "sha256",
+        "size_bytes",
+        "finding_count",
+        "findings_by_severity"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "present",
+            "absent"
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/formatToken"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/nullableHash64"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 67108864
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finding_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "findings_by_severity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/findingCounts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "findingCounts": {
+      "type": "object",
+      "required": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "properties": {
+        "info": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "low": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "medium": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "high": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "critical": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        }
+      },
+      "additionalProperties": false
+    },
+    "nonSuccessReason": {
+      "enum": [
+        "tool_exit_nonzero",
+        "timeout",
+        "cpu_limit",
+        "memory_limit",
+        "output_limit",
+        "sandbox_violation",
+        "parse_failure",
+        "unsupported",
+        "cancelled",
+        "internal_error"
+      ]
+    }
+  }
+}

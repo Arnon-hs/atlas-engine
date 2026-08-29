@@ -148,6 +148,9 @@ pub fn detect_secrets(source: &str) -> Vec<SensitiveMatch> {
 /// number of ASCII stars; LF and CR bytes remain unchanged, including in PEMs.
 pub fn redact_secrets(source: &str) -> RedactedText {
     let matches = detect_secrets(source);
+    let redaction_complete = matches
+        .iter()
+        .all(|matched| matched.rule_id != "secret.scan_limit");
     let mut bytes = source.as_bytes().to_vec();
     for matched in &matches {
         for byte in &mut bytes[matched.start_byte..matched.end_byte] {
@@ -173,5 +176,6 @@ pub fn redact_secrets(source: &str) -> RedactedText {
         content,
         redacted: !matches.is_empty(),
         redaction_count: matches.len(),
+        redaction_complete,
     }
 }

@@ -13,7 +13,7 @@ encrypted, split, dynamically constructed or unfamiliar secret formats may pass.
 Entropy alone is insufficient evidence. Tests contain synthetic non-live values.
 
 The indexer detects on the complete bounded file before making chunks and masks
-recognized bytes while preserving offsets and line breaks. It has no v0.1
+recognized bytes while preserving offsets and line breaks. It has no
 redaction opt-out. `redacted: false` means no configured pattern matched that
 record, not that its contents are safe or public. License-sensitive source,
 personal data, proprietary logic and low-entropy credentials still need consumer
@@ -29,8 +29,11 @@ CORS, shell or GitHub Actions interpreters. `.env` presence does not itself prov
 committed-in-HEAD status or live credentials; Git index membership is advisory.
 Ignored/unreadable files, binaries, invalid UTF-8, oversized content, unsupported
 metadata and exhausted bounds can make a scan incomplete. Review diagnostics.
-Security JSON exposes this through `truncated`; an explicit `--fail-on` gate exits
-6 on incomplete coverage, before considering the finding threshold (exit 5).
+Security JSON exposes incomplete required native-gate coverage through
+`truncated`; an explicit `--fail-on` gate exits 6 before considering the finding
+threshold (exit 5). Optional bounded dataflow can be partial while `truncated`
+remains false; inspect holistic `coverage.status` and gate-specific
+`coverage.required_gate_status` separately.
 Ordinary scans keep partial results without failing the process. Intentional
 policy exclusions, binary files, symlinks and special files remain outside scope;
 a successful gate says nothing about those files. SARIF marks an incomplete
@@ -39,8 +42,11 @@ invocation unsuccessful. See the [CLI contract](../contracts/cli.md).
 Native parser errors may produce fallback records or diagnostics, not fully
 accurate symbols. Qualified names and symbol kinds reflect supported grammar
 patterns. Large structures split deterministically into bounded parts; file-level
-fallback is expected for unsupported languages. No full semantic type checking or
-cross-file call/dependency graph is claimed.
+fallback is expected for unsupported languages. The opt-in advanced analyzer
+emits proven resolved static-import observations and explicit redacted
+`dynamic_unresolved` observations, not a complete build/runtime/call graph. The
+bounded Python model follows one intrafunction parameter-to-sink class;
+it is not cross-file taint analysis. No full semantic type checking is claimed.
 
 Results from the same immutable snapshot, options and engine version should be
 deterministic. Concurrent input edits, grammar upgrades, rule changes, different

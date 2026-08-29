@@ -6,7 +6,7 @@ Run from a clean checkout with the toolchain in `rust-toolchain.toml`:
 cargo bench -p atlas-repo-indexer --bench engine --locked
 ```
 
-The Criterion benchmark contains five independently timed operations:
+The Criterion benchmark contains seven independently timed operations:
 
 | Benchmark | Work measured | Setup outside the timer |
 | --- | --- | --- |
@@ -15,6 +15,8 @@ The Criterion benchmark contains five independently timed operations:
 | `representative_tree/analyze_metadata` | Statistics, manifest recognition and duplicate grouping over the accepted inventory | Walk and hash the fixture once |
 | `representative_tree/index_jsonl_sink` | Reread/hash validation, four Tree-sitter languages, full-file redaction, chunks and JSONL serialization to a sink | Create and inventory 160 source files plus two metadata/documentation files |
 | `representative_tree/security_scan` | Reread/hash validation, secrets and dangerous-primitive detection | Reuse the same bounded fixture inventory |
+| `representative_tree/snapshot_full_sink` | Full target reread, parsing, redaction, chunk/manifest hashing and schema 2.0 event serialization | Reuse the opened 162-file repository; no base manifest |
+| `representative_tree/snapshot_noop_delta_sink` | The same full target work, plus base validation/comparison, while omitting unchanged chunk payloads | Build a complete base manifest outside the timer; reuse the opened repository |
 
 The synthetic source tree contains PHP, JavaScript, TypeScript and Python, with
 classes, sixteen methods per file, and intentionally unsafe API calls. The files
@@ -99,6 +101,38 @@ regression claim. These short samples do not establish tail latency or throughpu
 for large, cold, adversarial or real-world monorepos. A separate optimized `--test`
 smoke run earlier completed all five benchmark cases.
 
+## v0.2 snapshot delivery observation: 2026-08-29
+
+This separate warm-cache run measured only the two new snapshot cases on the same
+Apple M4/macOS 26.5.1 host, with Rust 1.98.0, four scanner workers, ten samples,
+a one-second warmup and a three-second requested measurement target:
+
+```sh
+cargo bench --locked -p atlas-repo-indexer --bench engine -- \
+  snapshot_ --sample-size 10 --warm-up-time 1 --measurement-time 3
+```
+
+| Operation | Emitted payload | Point estimate | Criterion 95% confidence interval |
+| --- | --- | --- | --- |
+| Full snapshot | All 162 fixture files/chunks and a complete manifest | 66.250 ms | 64.537-67.758 ms |
+| No-op delta | Start/completion plus the complete target manifest; unchanged chunk payloads omitted | 66.573 ms | 60.899-71.902 ms |
+
+Both displayed estimates are Criterion regression slopes. Criterion extended
+collection to about 3.79 seconds/55 iterations for the full snapshot and 3.48
+seconds/55 iterations for the no-op delta. It reported one mild high outlier for
+full and two high outliers for no-op. CPU affinity, power mode, storage state and
+other host work were not controlled, so the overlapping intervals do not support
+a runtime improvement or regression claim.
+
+The no-op case still rereads, parses, redacts, hashes and serializes a complete
+target manifest. It excludes initial repository inventory, baseline JSON file I/O
+and consumer storage/network work. v0.2 saves unchanged event payload bytes; it
+does not accelerate target scanning or promise lower CPU time. Git/object-aware
+skipping, verified caches and bounded parallel snapshot parsing remain future work.
+The measurement ran on the final implementation working tree before a v0.2 source
+commit; use the exact revision recorded in the v0.2 delivery report, and rerun on
+an idle clean checkout before making regression decisions.
+
 ## Memory and indexing budgets
 
 Repository inventory retains bounded metadata, not every source file's contents.
@@ -112,4 +146,4 @@ diagnostic. These limits matter when setting unusually small chunk sizes.
 Named symbol identities exclude content, commit and byte positions. Duplicate
 names use occurrence order; split fragments use zero-based part indexes. Renames,
 moves, adding earlier duplicates and changing fragment boundaries may change IDs.
-v0.1 does not promise stable anonymous/file chunk identities under arbitrary edits.
+The engine does not promise stable anonymous/file chunk identities under arbitrary edits.

@@ -1,0 +1,491 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/diagnostic-event-v1.schema.json",
+  "title": "Atlas Engine diagnostic and terminal run events v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/diagnostic_event"
+    },
+    {
+      "$ref": "#/$defs/completed_event"
+    },
+    {
+      "$ref": "#/$defs/failed_event"
+    }
+  ],
+  "$defs": {
+    "common": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "engine_version",
+        "event"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "engine_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+        },
+        "event": {
+          "type": "string"
+        }
+      }
+    },
+    "portable_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+    },
+    "diagnostic_event": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "engine_version",
+            "event",
+            "diagnostic"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "1.0"
+            },
+            "engine_version": {
+              "type": "string"
+            },
+            "event": {
+              "const": "diagnostic"
+            },
+            "diagnostic": {
+              "type": "object",
+              "required": [
+                "code",
+                "relative_path",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]*$"
+                },
+                "relative_path": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/portable_path"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 4096,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]*$"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "destination",
+        "committed",
+        "bytes_written",
+        "sha256",
+        "limit_bytes"
+      ],
+      "properties": {
+        "destination": {
+          "enum": [
+            "stdout",
+            "file"
+          ]
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "bytes_written": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967296
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967296
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "committed": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sha256": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "committed": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic_counts": {
+      "type": "object",
+      "required": [
+        "emitted",
+        "suppressed"
+      ],
+      "properties": {
+        "emitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "suppressed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "completed_event": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "engine_version",
+            "event",
+            "command",
+            "status",
+            "exit_code",
+            "reason_code",
+            "output",
+            "diagnostics"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "1.0"
+            },
+            "engine_version": {
+              "type": "string"
+            },
+            "event": {
+              "const": "run.completed"
+            },
+            "command": {
+              "enum": [
+                "analyze",
+                "index",
+                "security",
+                "evidence",
+                "doctor",
+                "version"
+              ]
+            },
+            "status": {
+              "enum": [
+                "complete",
+                "policy_failed",
+                "incomplete"
+              ]
+            },
+            "exit_code": {
+              "enum": [
+                0,
+                5,
+                6
+              ]
+            },
+            "reason_code": {
+              "type": "null"
+            },
+            "output": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/output"
+                },
+                {
+                  "properties": {
+                    "committed": {
+                      "const": true
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                }
+              ]
+            },
+            "diagnostics": {
+              "$ref": "#/$defs/diagnostic_counts"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "exit_code": {
+                    "const": 0
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "policy_failed"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "exit_code": {
+                    "const": 5
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "incomplete"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "exit_code": {
+                    "const": 6
+                  }
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "failed_event": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "engine_version",
+            "event",
+            "command",
+            "status",
+            "exit_code",
+            "reason_code",
+            "output",
+            "diagnostics"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "1.0"
+            },
+            "engine_version": {
+              "type": "string"
+            },
+            "event": {
+              "const": "run.failed"
+            },
+            "command": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "analyze",
+                    "index",
+                    "security",
+                    "evidence",
+                    "doctor",
+                    "version"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "const": "failed"
+            },
+            "exit_code": {
+              "enum": [
+                2,
+                3,
+                4
+              ]
+            },
+            "reason_code": {
+              "enum": [
+                "cli_parse_error",
+                "configuration_error",
+                "input_error",
+                "internal_error",
+                "output_limit_exceeded",
+                "output_io_error",
+                "diagnostics_io_error"
+              ]
+            },
+            "output": {
+              "$ref": "#/$defs/output"
+            },
+            "diagnostics": {
+              "$ref": "#/$defs/diagnostic_counts"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "command": {
+                  "type": "null"
+                },
+                "exit_code": {
+                  "const": 2
+                },
+                "reason_code": {
+                  "const": "cli_parse_error"
+                }
+              }
+            },
+            {
+              "properties": {
+                "command": {
+                  "enum": [
+                    "analyze",
+                    "index",
+                    "security",
+                    "evidence",
+                    "doctor",
+                    "version"
+                  ]
+                },
+                "exit_code": {
+                  "const": 2
+                },
+                "reason_code": {
+                  "const": "configuration_error"
+                }
+              }
+            },
+            {
+              "properties": {
+                "command": {
+                  "enum": [
+                    "analyze",
+                    "index",
+                    "security",
+                    "evidence",
+                    "doctor",
+                    "version"
+                  ]
+                },
+                "exit_code": {
+                  "const": 3
+                },
+                "reason_code": {
+                  "const": "input_error"
+                }
+              }
+            },
+            {
+              "properties": {
+                "command": {
+                  "enum": [
+                    "analyze",
+                    "index",
+                    "security",
+                    "evidence",
+                    "doctor",
+                    "version"
+                  ]
+                },
+                "exit_code": {
+                  "const": 4
+                },
+                "reason_code": {
+                  "enum": [
+                    "internal_error",
+                    "output_limit_exceeded",
+                    "output_io_error",
+                    "diagnostics_io_error"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

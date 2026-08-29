@@ -1,0 +1,569 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/analyzer-advanced-v1.schema.json",
+  "title": "Atlas Engine bounded advanced analysis v1",
+  "description": "Structural metrics are explicit syntax counts, not cyclomatic complexity. Dependency observations distinguish proven resolved static imports from redacted dynamic_unresolved syntax. Null totals mean incomplete, unsupported, excluded, or unreported coverage and must not be interpreted as zero.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "repository",
+    "status",
+    "complexity_status",
+    "files",
+    "dependency_graph",
+    "test_mappings",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "$ref": "#/$defs/engineVersion"
+    },
+    "repository": {
+      "$ref": "#/$defs/repository"
+    },
+    "status": {
+      "$ref": "#/$defs/aggregateStatus"
+    },
+    "complexity_status": {
+      "$ref": "#/$defs/supportedAggregateStatus"
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "$ref": "#/$defs/fileAnalysis"
+      }
+    },
+    "dependency_graph": {
+      "$ref": "#/$defs/dependencyGraph"
+    },
+    "test_mappings": {
+      "$ref": "#/$defs/testMappingReport"
+    },
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "engineVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "coverageStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unsupported",
+        "excluded",
+        "not_reported"
+      ]
+    },
+    "aggregateStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial"
+      ]
+    },
+    "supportedAggregateStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unsupported"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "php",
+        "javascript",
+        "typescript",
+        "python",
+        "json",
+        "yaml",
+        "toml",
+        "markdown",
+        "shell",
+        "rust",
+        "unknown"
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+    },
+    "sourceRange": {
+      "type": "object",
+      "required": [
+        "start_line",
+        "end_line",
+        "start_byte",
+        "end_byte",
+        "start_column",
+        "end_column"
+      ],
+      "properties": {
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "commit": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      ]
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "repository_id",
+        "git"
+      ],
+      "properties": {
+        "repository_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "git": {
+          "type": "object",
+          "required": [
+            "is_repository",
+            "commit_sha",
+            "branch"
+          ],
+          "properties": {
+            "is_repository": {
+              "type": "boolean"
+            },
+            "commit_sha": {
+              "$ref": "#/$defs/commit"
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "structuralMetrics": {
+      "type": "object",
+      "required": [
+        "functions",
+        "branch_points",
+        "max_control_nesting"
+      ],
+      "properties": {
+        "functions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "branch_points": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_control_nesting": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "fileAnalysis": {
+      "type": "object",
+      "required": [
+        "relative_path",
+        "language",
+        "grammar_status",
+        "complexity_status",
+        "dependency_status",
+        "structural_metrics"
+      ],
+      "properties": {
+        "relative_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "language": {
+          "$ref": "#/$defs/language"
+        },
+        "grammar_status": {
+          "$ref": "#/$defs/coverageStatus"
+        },
+        "complexity_status": {
+          "$ref": "#/$defs/coverageStatus"
+        },
+        "dependency_status": {
+          "$ref": "#/$defs/coverageStatus"
+        },
+        "structural_metrics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/structuralMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complexity_status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "complexity_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "structural_metrics": {
+                "$ref": "#/$defs/structuralMetrics"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "structural_metrics": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "dependencyObservation": {
+      "type": "object",
+      "required": [
+        "source_path",
+        "target_path",
+        "kind",
+        "resolution",
+        "range"
+      ],
+      "properties": {
+        "source_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "target_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/relativePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "static_relative_import",
+            "dynamic_import"
+          ]
+        },
+        "resolution": {
+          "enum": [
+            "resolved",
+            "dynamic_unresolved"
+          ]
+        },
+        "range": {
+          "$ref": "#/$defs/sourceRange"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "resolution": {
+                "const": "resolved"
+              }
+            },
+            "required": [
+              "resolution"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target_path": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "kind": {
+                "const": "static_relative_import"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "target_path": {
+                "type": "null"
+              },
+              "kind": {
+                "const": "dynamic_import"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "dependencyGraph": {
+      "type": "object",
+      "required": [
+        "status",
+        "observation_count",
+        "observations"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/supportedAggregateStatus"
+        },
+        "observation_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "observations": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "$ref": "#/$defs/dependencyObservation"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "observation_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "observation_count": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "testMapping": {
+      "type": "object",
+      "required": [
+        "test_path",
+        "source_path",
+        "method",
+        "status"
+      ],
+      "properties": {
+        "test_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "source_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/relativePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "exact_import",
+            "naming_heuristic",
+            "unmapped"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/coverageStatus"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "unmapped"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "properties": {
+              "source_path": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "source_path": {
+                "$ref": "#/$defs/relativePath"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "testMappingReport": {
+      "type": "object",
+      "required": [
+        "status",
+        "mapping_count",
+        "mappings"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/aggregateStatus"
+        },
+        "mapping_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "mappings": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "$ref": "#/$defs/testMapping"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "mapping_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "mapping_count": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": [
+        "code",
+        "relative_path",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relative_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/relativePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

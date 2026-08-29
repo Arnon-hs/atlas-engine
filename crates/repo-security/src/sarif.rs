@@ -15,7 +15,7 @@ pub fn to_sarif(report: &SecurityReport) -> Value {
                 "shortDescription": {"text": finding.rule_id.replace('-', " ")},
                 "fullDescription": {"text": finding.message},
                 "defaultConfiguration": {"level": level(finding.severity)},
-                "properties": {"tags": ["security"], "precision": "medium"}
+                "properties": {"tags": ["security"]}
             })
         });
     }
@@ -57,7 +57,10 @@ pub fn to_sarif(report: &SecurityReport) -> Value {
                 "repository_id": report.repository.repository_id,
                 "commit_sha": report.repository.git.commit_sha,
                 "truncated": report.truncated,
-                "diagnostic_count": report.diagnostics.len()
+                "diagnostic_count": report.diagnostics.len(),
+                "coverage": &report.coverage,
+                "execution_signal_records": report.signals.len(),
+                "bounded_dataflow_records": report.dataflows.len()
             }
         }]
     })
