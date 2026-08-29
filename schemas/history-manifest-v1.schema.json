@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/history-manifest-v1.schema.json",
+  "title": "Atlas Engine caller-supplied bounded history manifest v1",
+  "description": "Runtime validation additionally enforces a 16 MiB input limit, sorted unique portable paths, safe labels and the domain-separated canonical manifest_id. Null metrics mean not reported and must never be interpreted as zero.",
+  "type": "object",
+  "required": ["schema_version", "producer", "repository_id", "base_commit_sha", "target_commit_sha", "configuration_id", "history_mode", "rename_mode", "complete", "entries", "manifest_id"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "producer": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+$"
+    },
+    "base_commit_sha": { "$ref": "#/$defs/commit" },
+    "target_commit_sha": { "$ref": "#/$defs/commit" },
+    "configuration_id": { "$ref": "#/$defs/digest" },
+    "history_mode": { "type": "string", "enum": ["first_parent", "all_parents"] },
+    "rename_mode": { "type": "string", "enum": ["no_follow", "follow"] },
+    "complete": { "type": "boolean" },
+    "entries": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "manifest_id": { "$ref": "#/$defs/digest" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+    },
+    "nullableMetric": {
+      "anyOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "entry": {
+      "type": "object",
+      "required": ["relative_path", "commit_count", "lines_added", "lines_deleted"],
+      "properties": {
+        "relative_path": { "$ref": "#/$defs/relativePath" },
+        "commit_count": { "$ref": "#/$defs/nullableMetric" },
+        "lines_added": { "$ref": "#/$defs/nullableMetric" },
+        "lines_deleted": { "$ref": "#/$defs/nullableMetric" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

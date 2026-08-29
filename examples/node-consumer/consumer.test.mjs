@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { consumeIndex } from './consumer.mjs';
 
 const RECORD = Object.freeze({
-  schema_version: '1.0', engine_version: '0.1.0', repository_id: 'test/repo', commit_sha: null,
+  schema_version: '1.0', engine_version: '0.4.0', repository_id: 'test/repo', commit_sha: null,
   relative_path: 'src/example.py', language: 'python', chunk_id: 'b'.repeat(64), content_hash: 'a'.repeat(64),
   symbol_kind: 'function', symbol_name: 'f', qualified_name: 'f',
   start_line: 1, end_line: 2, start_byte: 0, end_byte: 18,

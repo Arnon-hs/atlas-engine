@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod chunking;
+mod snapshot;
 
 use std::io::{self, Write};
 
@@ -19,6 +20,10 @@ use serde::Serialize;
 use thiserror::Error;
 
 pub use chunking::chunk_source;
+pub use snapshot::{
+    MAX_MANIFEST_BYTES, ManifestChunk, ManifestFile, SNAPSHOT_SCHEMA_VERSION, SnapshotError,
+    SnapshotManifest, SnapshotSummary, read_manifest, record_fingerprint, snapshot_to_writer,
+};
 
 pub const DEFAULT_MAX_CHUNK_BYTES: usize = 16 * 1024;
 pub const MAX_CHUNK_BYTES: usize = 1024 * 1024;

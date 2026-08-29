@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/version-v1.schema.json",
+  "title": "Atlas Engine version identity v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "index_snapshot_schema_version",
+    "security_coverage_schema_version",
+    "execution_signal_schema_version",
+    "bounded_dataflow_schema_version",
+    "advanced_analysis_schema_version",
+    "history_manifest_schema_version",
+    "hotspot_report_schema_version",
+    "external_security_evidence_schema_version",
+    "diagnostic_event_schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "engine_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+    },
+    "index_snapshot_schema_version": {
+      "const": "2.0"
+    },
+    "security_coverage_schema_version": {
+      "const": "1.0"
+    },
+    "execution_signal_schema_version": {
+      "const": "1.0"
+    },
+    "bounded_dataflow_schema_version": {
+      "const": "1.0"
+    },
+    "advanced_analysis_schema_version": {
+      "const": "1.0"
+    },
+    "history_manifest_schema_version": {
+      "const": "1.0"
+    },
+    "hotspot_report_schema_version": {
+      "const": "1.0"
+    },
+    "external_security_evidence_schema_version": {
+      "const": "1.0"
+    },
+    "diagnostic_event_schema_version": {
+      "const": "1.0"
+    }
+  },
+  "additionalProperties": false
+}

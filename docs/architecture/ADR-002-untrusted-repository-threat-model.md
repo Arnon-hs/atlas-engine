@@ -9,7 +9,10 @@ can still leak secrets or exhaust resources without bounds.
 
 Never execute repository code, Git hooks, configuration commands, filters or tools.
 Use capability-relative access; reject symlinks and special files. Bound file size,
-file count, total bytes, depth, ignore metadata, parsing and diagnostic retention.
+file count, total bytes, retained inventory metadata, depth, ignore metadata,
+parsing and diagnostic retention. The inventory budget charges normalized path
+bytes plus deterministic fixed record costs; exhaustion stops admission and is an
+explicit incomplete-coverage diagnostic rather than a confirmed zero result.
 Use inert Git metadata only and avoid external worktree/config discovery. Redact
 sensitive content by default before indexing. Escape terminal output and serialize
 machine data using Serde. Caller supplies a read-only snapshot and process limits.

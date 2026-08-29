@@ -131,6 +131,16 @@
           "type": "integer",
           "minimum": 0
         },
+        "max_metadata_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1073741824
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967296
+        },
         "max_depth": {
           "type": "integer",
           "minimum": 0
@@ -166,6 +176,25 @@
         ]
       }
     },
+    "extended_ast_languages": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["php", "javascript", "typescript", "python", "rust", "shell"]
+      }
+    },
+    "caller_history_manifest_supported": {
+      "const": true
+    },
+    "security_coverage_schema_version": { "const": "1.0" },
+    "execution_signal_schema_version": { "const": "1.0" },
+    "bounded_dataflow_schema_version": { "const": "1.0" },
+    "advanced_analysis_schema_version": { "const": "1.0" },
+    "history_manifest_schema_version": { "const": "1.0" },
+    "hotspot_report_schema_version": { "const": "1.0" },
+    "external_security_evidence_schema_version": { "const": "1.0" },
+    "diagnostic_event_schema_version": { "const": "1.0" },
     "network_required": {
       "const": false
     },

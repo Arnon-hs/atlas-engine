@@ -1,27 +1,41 @@
-# v0.2 design: incremental index snapshots
+# Incremental index snapshots and later acceleration
 
-Status: design only. v0.1 does not accept `index --since` and emits no upsert/delete
-events. Implementing a safe full snapshot precedes incremental acceleration.
+v0.2 implements [complete manifests and delta events](../contracts/index-snapshots-v2.md)
+with a full target rescan. v0.1 has no `--since` or transaction events. The v0.2
+flag accepts a manifest JSON file, not the Git-commit meaning proposed below.
+This separation makes completeness/deletion semantics testable before adding
+Git object access or a parser cache. It is delta delivery, not a claim of less
+filesystem/AST work.
 
 ## State needed
 
-The consumer stores an accepted snapshot manifest: repository ID, acquired commit,
-clean/immutable checkout evidence, engine version, schema major, normalized
-options/exclusion digest, grammar/redaction version, scan completeness, and the
-path-to-chunk-ID/content-hash map. A commit without those fields is insufficient.
+The consumer stores the accepted v2 manifest and separate acquisition/immutability
+evidence: repository ID, observed and acquired commit, engine/schema identity,
+configuration and ignore-selection digests, completeness and the path/chunk/hash
+map. The manifest alone does not prove checkout cleanliness or authenticity.
 Changing relevant options, redaction/parser semantics or schema major requires a
 full reindex unless a migration proves compatibility.
 
-## Proposed protocol
+## Implemented protocol
 
-A future versioned envelope identifies base commit and target commit and provides
-a transaction ID. A safe Git abstraction reads immutable Git object data without
+The current start/upsert/delete/complete/abort state machine, byte-exact stream
+digest and deterministic base/target transaction ID are specified in the v2
+contract. All eligible target files are reread; missing or partial coverage
+prevents deletions. A final manifest includes empty files and can represent an
+empty repository without an unproven empty stream. Record hashes include metadata
+changes and exclude only commit SHA, which retained records adopt from the target
+manifest. Engine or semantic configuration/ignore changes require a full snapshot.
+
+## Future Git acceleration, not implemented
+
+A future Git-aware mode would bind the accepted snapshot to verified base and
+target objects. A safe Git abstraction must read immutable Git object data without
 hooks, external diff, textconv, config commands, or outside-root pointers. Require
 the base to be known and reachable in the acquired repository; refuse ambiguous
 history, missing objects and unsupported object formats rather than guessing.
 
-For added/modified eligible files, reparse and emit `chunk.upsert` only for changed
-content versions. Compare the old and new chunk sets for each successfully
+After that proof, added/modified eligible files could be reparsed and emit
+`chunk.upsert` only for changed record versions. Compare the chunk sets for each successfully
 processed file and emit `chunk.delete` for IDs no longer present. For a true file
 deletion, delete only IDs belonging to that path in the accepted base manifest.
 A rename can initially be a delete/add; rename heuristics must not promise
@@ -41,11 +55,16 @@ must not overwrite each other. On drift, failure or lost provenance, discard the
 incremental job and run an explicit full scan. No database implementation or
 scheduler enters the engine.
 
-## Required tests before implementation is accepted
+## Test requirements
 
-Cover body-only edits, overload/duplicate names, additions/deletions, rename,
-symbol moves, empty files, base mismatch, non-ancestor bases, shallow/missing Git
-objects, dirty/untracked data, ignore/config changes, skipped large files,
-redaction/grammar changes, interrupted streams, repeated events, and concurrent
-consumer commits. Differential tests must prove a successful incremental result
-equals a complete scan at the same target/options.
+The v0.2 suites exercise body-only edits, duplicate names, additions/deletions,
+rename, symbol movement, empty input, base mismatch, ignore/config changes,
+skipped/changed input, interrupted output and repeated transactions. Differential
+tests compare an applied delta with a complete scan, including target commit
+rebinding. These local tests do not prove a consumer's persistent CAS behavior.
+
+Git acceleration will additionally require non-ancestor/missing/shallow objects,
+dirty/untracked data, sparse worktrees, submodules and object-format tests. Those
+checks are not presented as implemented in the manifest-only mode. Parser or
+redaction upgrades require explicit invalidation; a cache must never reuse
+unredacted or semantically stale data.

@@ -24,7 +24,7 @@ def check():
             errors.append(f"{member}: shared README is not declared")
         if package.get("license") != {"workspace": True}:
             errors.append(f"{member}: license must inherit workspace SPDX")
-        for name in ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE"]:
+        for name in ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]:
             copy = directory / name
             if not copy.is_file() or copy.is_symlink() or copy.read_bytes() != (ROOT / name).read_bytes():
                 errors.append(f"{member}/{name}: missing or stale canonical ordinary-file copy")

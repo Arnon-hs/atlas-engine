@@ -6,6 +6,9 @@
 
 #![forbid(unsafe_code)]
 
+mod advanced;
+mod history;
+
 use std::collections::BTreeMap;
 
 use repo_core::{
@@ -13,6 +16,9 @@ use repo_core::{
 };
 use serde::Serialize;
 use thiserror::Error;
+
+pub use advanced::*;
+pub use history::*;
 
 /// Maximum number of largest source files included in a report.
 pub const LARGEST_FILES_LIMIT: usize = 20;
@@ -32,6 +38,14 @@ pub struct AnalysisReport {
     pub test_files: Vec<String>,
     pub documentation_files: Vec<String>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Opt-in bounded structural analysis. Omitted by the legacy command so
+    /// schema-1.0 output remains byte-for-byte compatible in shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advanced: Option<AdvancedAnalysisReport>,
+    /// Optional products of complete structural metrics and caller-supplied
+    /// bounded history evidence. Missing or partial inputs never become zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hotspots: Option<HotspotReport>,
 }
 
 /// Totals over accepted files. Unknown line counts contribute no lines and are
@@ -161,6 +175,8 @@ pub fn analyze(repository: &Repository) -> Result<AnalysisReport, AnalyzerError>
         test_files: Vec::new(),
         documentation_files: Vec::new(),
         diagnostics: repository.diagnostics.clone(),
+        advanced: None,
+        hotspots: None,
     };
     let mut languages = BTreeMap::new();
     let mut duplicates: BTreeMap<(String, u64), Vec<String>> = BTreeMap::new();

@@ -47,6 +47,25 @@ fn index(paths: &[&str]) -> Vec<u8> {
     bytes
 }
 
+fn generated_index(path_count: usize) -> Vec<u8> {
+    let mut bytes = b"DIRC".to_vec();
+    bytes.extend_from_slice(&2_u32.to_be_bytes());
+    bytes.extend_from_slice(&(path_count as u32).to_be_bytes());
+    for number in 0..path_count {
+        let path = format!("ghost/path-{number:05}.txt");
+        let start = bytes.len();
+        bytes.extend_from_slice(&[0; 60]);
+        bytes.extend_from_slice(&(path.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(path.as_bytes());
+        bytes.push(0);
+        while !(bytes.len() - start).is_multiple_of(8) {
+            bytes.push(0);
+        }
+    }
+    bytes.extend_from_slice(&[0; 20]);
+    bytes
+}
+
 #[test]
 fn obeys_scoped_ignore_rules_and_distinguishes_policies() {
     let temp = tempdir().unwrap();
@@ -85,6 +104,134 @@ fn obeys_scoped_ignore_rules_and_distinguishes_policies() {
             .iter()
             .all(|f| f.tracking == TrackingState::Unknown)
     );
+}
+
+#[test]
+fn selection_fingerprint_is_portable_and_independent_of_source_and_git_identity() {
+    let first = tempdir().unwrap();
+    let second = tempdir().unwrap();
+    let entries = [
+        (".gitignore", "*.tmp\n"),
+        ("src/.gitignore", "*.log\n"),
+        (".git/info/exclude", "*.local\n"),
+        ("src/main.py", "print('fixture')\n"),
+    ];
+    inert_git(first.path());
+    inert_git(second.path());
+    for (path, contents) in entries {
+        put(first.path(), path, contents);
+    }
+    for (path, contents) in entries.into_iter().rev() {
+        put(second.path(), path, contents);
+    }
+    let scan = |root: &Path, threads| {
+        Repository::open(
+            root,
+            ScanOptions {
+                threads,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .selection_fingerprint
+    };
+    let expected = scan(first.path(), 1);
+    assert!(expected == scan(second.path(), 4));
+    assert!(expected.len() == 64 && expected.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    put(second.path(), "src/main.py", "print('changed fixture')\n");
+    put(second.path(), "new.py", "pass\n");
+    put(
+        second.path(),
+        ".git/index",
+        index(&["src/main.py", "new.py"]),
+    );
+    put(
+        second.path(),
+        ".git/refs/heads/main",
+        "abcdef0123456789abcdef0123456789abcdef0123\n",
+    );
+    assert!(expected == scan(second.path(), 2));
+}
+
+#[test]
+fn selection_fingerprint_tracks_changed_removed_and_empty_ignore_scopes() {
+    let temp = tempdir().unwrap();
+    inert_git(temp.path());
+    let scan = || {
+        Repository::open(temp.path(), ScanOptions::default())
+            .unwrap()
+            .selection_fingerprint
+    };
+    let absent = scan();
+    for path in [".gitignore", "nested/.gitignore", ".git/info/exclude"] {
+        put(temp.path(), path, "");
+        let empty_scope = scan();
+        assert!(
+            empty_scope != absent,
+            "An empty scope must differ from absence"
+        );
+        put(temp.path(), path, "*.tmp\n");
+        let original = scan();
+        assert!(original != empty_scope);
+        put(temp.path(), path, "*.log\n");
+        assert!(
+            scan() != original,
+            "Changed ignore bytes require a new identity"
+        );
+        fs::remove_file(temp.path().join(path)).unwrap();
+        assert!(
+            scan() == absent,
+            "Removed metadata must leave no retained scope"
+        );
+    }
+
+    put(temp.path(), "nested/.gitignore", "*.tmp\n");
+    let nested = scan();
+    fs::remove_file(temp.path().join("nested/.gitignore")).unwrap();
+    put(temp.path(), "other/.gitignore", "*.tmp\n");
+    assert!(
+        scan() != nested,
+        "Identical rules at different scopes are distinct"
+    );
+}
+
+#[test]
+fn selection_fingerprint_retains_metadata_failures_without_exposing_rules() {
+    let temp = tempdir().unwrap();
+    inert_git(temp.path());
+    let scan = || Repository::open(temp.path(), ScanOptions::default()).unwrap();
+    let absent = scan().selection_fingerprint;
+    for path in [".gitignore", "nested/.gitignore", ".git/info/exclude"] {
+        put(temp.path(), path, [0xff]);
+        let invalid = scan();
+        assert!(invalid.selection_fingerprint != absent);
+        assert!(invalid.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ignore_invalid" && diagnostic.relative_path.as_deref() == Some(path)
+        }));
+        put(temp.path(), path, [0xfe]);
+        assert!(scan().selection_fingerprint != invalid.selection_fingerprint);
+
+        put(temp.path(), path, "x".repeat(1025));
+        let limited = scan();
+        assert!(limited.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ignore_limit" && diagnostic.relative_path.as_deref() == Some(path)
+        }));
+        assert!(limited.selection_fingerprint != absent);
+
+        put(temp.path(), path, "x".repeat(65 * 1024));
+        let unread = scan();
+        let expected_code = if path == ".git/info/exclude" {
+            "git_exclude_unavailable"
+        } else {
+            "file_too_large"
+        };
+        assert!(unread.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == expected_code && diagnostic.relative_path.as_deref() == Some(path)
+        }));
+        assert!(unread.selection_fingerprint == absent);
+        fs::remove_file(temp.path().join(path)).unwrap();
+    }
 }
 
 #[test]
@@ -141,6 +288,45 @@ fn reads_inert_git_tracking_without_interpreting_config() {
             .tracking,
         TrackingState::Untracked
     );
+    assert!(
+        !repo
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "metadata_budget")
+    );
+}
+
+#[test]
+fn large_git_index_cannot_bypass_the_retained_metadata_budget() {
+    let temp = tempdir().unwrap();
+    inert_git(temp.path());
+    put(temp.path(), ".git/index", generated_index(50_000));
+    // Once the index retained-data budget is exhausted, later Git metadata must
+    // not be read or retained beside an already rejected tracking inventory.
+    put(temp.path(), ".git/info/exclude", "x".repeat(65 * 1024));
+    put(temp.path(), "visible.py", "print('must not be admitted')\n");
+
+    let repo = Repository::open(
+        temp.path(),
+        ScanOptions {
+            max_metadata_bytes: 1024,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert!(repo.files.is_empty());
+    assert_eq!(
+        repo.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "metadata_budget")
+            .count(),
+        1
+    );
+    assert!(!repo.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.code.as_str(),
+        "git_index_unsupported" | "git_exclude_unavailable"
+    )));
 }
 
 #[test]
@@ -280,12 +466,166 @@ fn entry_exhaustion_skips_the_whole_unsorted_directory() {
 }
 
 #[test]
+fn zero_byte_long_paths_are_bounded_by_metadata_and_thread_deterministic() {
+    let temp = tempdir().unwrap();
+    for index in 0..64 {
+        put(
+            temp.path(),
+            &format!("{}-{index:03}.py", "long-path-".repeat(18)),
+            "",
+        );
+    }
+
+    let scan = |threads| {
+        Repository::open(
+            temp.path(),
+            ScanOptions {
+                max_files: 1_000,
+                max_metadata_bytes: 4 * 1024,
+                threads,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let serial = scan(1);
+    let parallel = scan(8);
+
+    assert!(!serial.files.is_empty());
+    assert!(serial.files.len() < 64);
+    assert!(serial.files.iter().all(|file| file.size_bytes == 0));
+    let expected_prefix: Vec<_> = (0..serial.files.len())
+        .map(|index| format!("{}-{index:03}.py", "long-path-".repeat(18)))
+        .collect();
+    assert_eq!(
+        names(&serial),
+        expected_prefix
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(names(&serial), names(&parallel));
+    assert_eq!(serial.diagnostics, parallel.diagnostics);
+    assert_eq!(serial.selection_fingerprint, parallel.selection_fingerprint);
+    assert_eq!(
+        serial
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "metadata_budget")
+            .count(),
+        1
+    );
+    let exhausted = serial
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "metadata_budget")
+        .unwrap();
+    assert!(exhausted.relative_path.is_none());
+    assert_eq!(
+        exhausted.message,
+        "Inventory metadata byte budget reached; remaining entries were not admitted"
+    );
+}
+
+#[test]
+fn diagnostic_and_ignore_metadata_share_the_inventory_budget() {
+    let ignored = tempdir().unwrap();
+    put(ignored.path(), ".gitignore", "a\nb\nc\nd\n");
+    put(ignored.path(), "visible.py", "");
+    let ignore_limited = Repository::open(
+        ignored.path(),
+        ScanOptions {
+            max_metadata_bytes: 1024,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(ignore_limited.files.is_empty());
+    assert_eq!(
+        ignore_limited
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "metadata_budget")
+            .count(),
+        1
+    );
+
+    let excluded = tempdir().unwrap();
+    for index in 0..8 {
+        put(
+            excluded.path(),
+            &format!("{}-{index:03}.py", "excluded-".repeat(18)),
+            "",
+        );
+    }
+    let diagnostic_limited = Repository::open(
+        excluded.path(),
+        ScanOptions {
+            excludes: vec!["*".into()],
+            max_metadata_bytes: 1024,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(diagnostic_limited.files.is_empty());
+    assert!(
+        diagnostic_limited
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "excluded_user")
+    );
+    assert_eq!(
+        diagnostic_limited
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "metadata_budget")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn retained_caller_exclusion_configuration_must_fit_before_compilation() {
+    let temp = tempdir().unwrap();
+    put(temp.path(), "visible.py", "pass\n");
+    let error = Repository::open(
+        temp.path(),
+        ScanOptions {
+            excludes: vec!["x".repeat(512)],
+            max_metadata_bytes: 1024,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("too small for retained caller configuration")
+    );
+}
+
+#[test]
 fn classification_and_path_model_are_portable() {
     assert_eq!(
         normalize_relative_path(Path::new("./a/./b.py")).unwrap(),
         "a/b.py"
     );
-    for bad in ["", ".", "..", "a/../b", "/root/file", "a\\b", "C:/file"] {
+    for bad in [
+        "",
+        ".",
+        "..",
+        "a/../b",
+        "/root/file",
+        "a\\b",
+        "C:/file",
+        "control\u{1b}.py",
+        "newline\n.py",
+        "bidi\u{202e}.py",
+        "isolate\u{2066}.py",
+        "line\u{2028}separator.py",
+        "paragraph\u{2029}separator.py",
+    ] {
         assert!(normalize_relative_path(Path::new(bad)).is_err(), "{bad}");
     }
     assert!(
@@ -318,6 +658,16 @@ fn invalid_configuration_and_secret_identifiers_are_rejected_safely() {
     let temp = tempdir().unwrap();
     let options = ScanOptions {
         threads: 0,
+        ..Default::default()
+    };
+    assert!(Repository::open(temp.path(), options).is_err());
+    let options = ScanOptions {
+        max_metadata_bytes: 0,
+        ..Default::default()
+    };
+    assert!(Repository::open(temp.path(), options).is_err());
+    let options = ScanOptions {
+        max_metadata_bytes: repo_core::MAX_METADATA_BYTES + 1,
         ..Default::default()
     };
     assert!(Repository::open(temp.path(), options).is_err());

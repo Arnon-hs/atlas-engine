@@ -1,0 +1,8 @@
+[package]
+name = "atlas-engine-surface-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[build-dependencies]
+fixture-build-helper = "0.0.0"

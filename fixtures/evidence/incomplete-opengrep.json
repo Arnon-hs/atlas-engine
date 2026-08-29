@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "8d1ae152c2a5a0b41e2067e04171dff6822cb8d000064d7bad8f7ffae1b89e7f",
+  "subject": {
+    "repository_id": "fixture/incomplete-opengrep",
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "snapshot_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "configuration_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "selection_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "producer": {
+    "runner_name": "atlas-security-runner",
+    "runner_version": "0.1.0",
+    "runner_binary_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "tool_name": "opengrep",
+    "tool_version": "1.16.0",
+    "tool_binary_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "domain": "sast",
+  "materials": [
+    {
+      "kind": "configuration",
+      "state": "present",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "kind": "database",
+      "state": "not_applicable",
+      "sha256": null
+    },
+    {
+      "kind": "ruleset",
+      "state": "present",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "scope": {
+    "include_patterns": [
+      "src/**"
+    ],
+    "exclude_patterns": [
+      "src/generated/**"
+    ],
+    "languages": [
+      "javascript",
+      "php",
+      "python",
+      "typescript"
+    ],
+    "selected_files": 12,
+    "evaluated_files": 8
+  },
+  "execution": {
+    "status": "incomplete",
+    "termination_reason": "timeout",
+    "exit_code": null,
+    "network_access": "denied",
+    "repository_access": "read_only",
+    "repository_code_executed": false
+  },
+  "result": {
+    "state": "present",
+    "format": "sarif-2.1.0",
+    "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "size_bytes": 4096,
+    "finding_count": null,
+    "findings_by_severity": null
+  }
+}

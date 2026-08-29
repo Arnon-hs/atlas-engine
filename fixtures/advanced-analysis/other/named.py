@@ -1,0 +1,2 @@
+def named():
+    return "other"

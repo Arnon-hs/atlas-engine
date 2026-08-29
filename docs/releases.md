@@ -1,7 +1,9 @@
 # Release, SBOM and provenance
 
 Status: prepared workflow and tooling, no published artifacts, successful hosted
-release run, badge or SLSA level claimed. Initial planned release: `0.1.0`.
+release run, badge or SLSA level claimed. Current source version: `0.4.0`;
+it and the prior v0.1, v0.2 and v0.3 source baselines are not claimed as
+published binary releases.
 Publication requires explicit owner authorization and verified GitHub settings.
 
 ## Before tagging
@@ -34,6 +36,14 @@ are never committed to Git. Linux GNU artifacts inherit the build image's glibc
 compatibility; broad older-distribution support is not yet validated. macOS
 notarization is not configured and should not be claimed.
 
+Before reporting a prepared target, the packager re-opens its bounded archive,
+rejects links, special files, duplicate/escaping paths and excessive expansion,
+checks the executable bit and required license/schema/inventory members, verifies
+the exact declared dependency-license file set and hashes, compares embedded
+SBOM/release identity sizes and SHA-256 digests with their sidecars, and verifies the exact
+three-subject checksum manifest. This is a packaging rehearsal, not hosted
+attestation or independent release verification.
+
 The publish job downloads only artifacts from the same run, requires the exact
 four-target file set, verifies hashes, emits `SHA256SUMS`, creates keyless
 attestations and opens a **draft** GitHub release. It does not build or execute
@@ -59,10 +69,14 @@ CARGO_NET_OFFLINE=true cargo cyclonedx \
 `scripts/prepare_release.py` packages an already built target using
 `ATLAS_RELEASE_TAG`/`ATLAS_RELEASE_TARGET`. Both normal and `--validate-only` modes
 require a real HEAD commit and the fully qualified `refs/tags/vMAJOR.MINOR.PATCH`
-tag to resolve to that same commit. Tracked changes and non-ignored untracked files
-are rejected; intentionally ignored build/SBOM artifacts remain allowed. The
-initial checkout without a commit or matching tag is not release provenance.
-These local checks do not verify protected-branch review or remote tag identity.
+tag to resolve to that same commit. They also require the tag commit to be an
+ancestor of the existing local `refs/remotes/origin/main` commit. The script does
+not fetch or update that ref; the trusted checkout must materialize it before
+validation. Tracked changes and non-ignored untracked files are rejected;
+intentionally ignored build/SBOM artifacts remain allowed. The initial checkout
+without a commit, matching tag or trusted main ref is not release provenance.
+These local checks do not verify protected-branch review, ref freshness or remote
+tag identity.
 Only trusted engine
 source/build tooling runs Cargo. Do not generate SBOMs by running Cargo inside
 repositories scanned by Atlas Engine.
@@ -83,7 +97,7 @@ Checksums alone detect corruption, not a substituted release. Verify the hosted
 identity and subject digest with GitHub CLI:
 
 ```bash
-gh attestation verify atlas-engine-v0.1.0-aarch64-apple-darwin.tar.gz \
+gh attestation verify atlas-engine-v0.4.0-aarch64-apple-darwin.tar.gz \
   --repo Arnon-hs/atlas-engine \
   --signer-workflow Arnon-hs/atlas-engine/.github/workflows/release.yml \
   --deny-self-hosted-runners
