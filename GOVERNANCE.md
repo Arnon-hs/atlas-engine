@@ -8,7 +8,7 @@ Maintainers review contributions and uphold the read-only analysis scope,
 contracts, testing, security response, and release requirements. Small fixes can
 use a focused PR; significant architecture or schema changes need a public issue
 and an ADR. Breaking machine semantics need a new schema major. Explain rejected
-proposals and retain decision records. No private AtlasRepo requirement overrides
+proposals and retain decision records. No private downstream requirement overrides
 the engine's public boundary.
 
 Code review is the normal merge path. Require a non-author human review before

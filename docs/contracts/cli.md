@@ -106,8 +106,8 @@ atlas-engine evidence /state/evidence.json \
 Success proves contract consistency, not producer authentication, binary
 attestation, sandbox enforcement or scanner coverage beyond the producer's
 validated assertions. A valid `incomplete` or `failed` evidence manifest also
-returns exit 0 because this command validates metadata; Scout must require nested
-`execution.status: complete` in its security policy, or invoke
+returns exit 0 because this command validates metadata; consumers must require
+nested `execution.status: complete` in their security policy, or invoke
 `--require-complete` to receive exit 6. `--result` is mandatory for
 both complete and incomplete manifests whose result state is `present`, and is
 rejected for failed/absent results.

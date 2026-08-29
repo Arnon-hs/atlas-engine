@@ -47,8 +47,8 @@ error kills the process; timeout/cancellation sends SIGTERM and then SIGKILL if
 needed. Valid prefixes remain staged until the child exits 0. Failures remove
 staging without replacing existing data. Empty streams are rejected because v1
 has no index envelope to verify their provenance. See
-[production integration](../../docs/integrations/atlasrepo-scout.md) for handling
-empty or incomplete scans safely.
+[the subprocess integration guide](../../docs/integrations/subprocess-consumers.md)
+for handling empty or incomplete scans safely.
 
 On success a directory keyed by SHA-256 of provenance plus the stream digest
 contains `chunks.jsonl`, `manifest.json`, and bounded `diagnostics.json`. Repeating

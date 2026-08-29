@@ -81,7 +81,7 @@ OR Apache-2.0` and retain ordinary project contribution review.
 | Trivy | Apache-2.0; broad filesystem/container coverage overlaps OSV and Gitleaks until there is a concrete container/IaC use case |
 | YARA-X | BSD-3-Clause; add only for a defined binary/malware corpus and expansion limits |
 | Joern | Apache-2.0; heavy CPG/dataflow research comparator, not a bounded default worker |
-| CodeQL CLI | Separate GitHub terms restrict use and redistribution; keep it in eligible GitHub CI, not a portable Scout runner |
+| CodeQL CLI | Separate GitHub terms restrict use and redistribution; keep it in eligible GitHub CI, not a portable consumer runner |
 | Semgrep-maintained rules | Source-available Rules License is not suitable for redistribution or a scanning service |
 
 Adding one of these tools requires a scoped issue with a real repository/use

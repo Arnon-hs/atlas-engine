@@ -38,7 +38,7 @@ URL: <https://opensource.guide/security-best-practices-for-your-project/>
 
 Do not copy badges or support SLAs from another project. Tests and a Scorecard
 number do not prove safe output publication or independent security review. Keep
-AtlasRepo acquisition, persistence and embeddings outside the engine. Defer
+consumer acquisition, persistence and embeddings outside the engine. Defer
 governance machinery that does not solve an observed problem, but do not defer a
 working private vulnerability channel.
 
