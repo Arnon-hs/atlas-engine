@@ -51,8 +51,10 @@ flowchart TD
 
 See the [architecture decisions](docs/architecture/ADR-001-rust-workspace.md) and
 [threat model](docs/security/threat-model.md).
-The [v0.1 delivery report](docs/delivery-report-v0.1.0.md) records actual local
-verification, measured benchmarks, source publication and remaining owner actions.
+The [v0.2 delivery report](docs/delivery-report-v0.2.0.md) records the snapshot
+protocol evidence, actual macOS/Linux verification and remaining publication and
+consumer controls. The [v0.1 report](docs/delivery-report-v0.1.0.md) preserves the
+initial architecture, dependency/license and source-publication evidence.
 
 ## Build and run
 
