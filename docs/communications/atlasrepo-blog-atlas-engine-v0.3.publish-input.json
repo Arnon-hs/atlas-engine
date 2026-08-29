@@ -15,12 +15,13 @@
   "editorial": {
     "topicCluster": "repository-security",
     "outputLanguage": "ru",
-    "editorialStatus": "draft_review_only",
+    "editorialStatus": "published",
     "promptVersion": "human-reviewed-atlas-engine-v0.3-draft",
     "practicalSteps": [
       "Проверить coverage contract перед интерпретацией findings.",
       "Отделять execution capabilities от доказанных уязвимостей.",
       "Передавать результаты внешних сканеров только через evidence manifest."
-    ]
+    ],
+    "forumTopicUrl": "https://forum.atlasrepo.com/t/atlas-engine-v0-3-source-candidate-unknown-zero/124"
   }
 }
