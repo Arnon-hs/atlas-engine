@@ -43,7 +43,7 @@ release; no finding is closed based only on a tool's successful exit status.
 | Version | Policy |
 | --- | --- |
 | Latest `0.4.x` patch | Best-effort security fixes through 2027-02-28; users must update to the latest `0.4.x` patch |
-| `v0.4.0` source tag and earlier source baselines | No promised backports; explicit exceptions require a published support notice |
+| `v0.4.1` and `v0.4.0` source tags, and earlier source baselines | No promised backports; explicit exceptions require a published support notice |
 
 Do not infer a maintenance guarantee from a version number. The support window
 is a best-effort maintainer commitment rather than a staffed SLA. A later release

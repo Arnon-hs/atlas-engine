@@ -8,7 +8,7 @@ though its crates.io package is `atlas-repo-core`.
 
 ```text
 SCHEMA_VERSION: &str = "1.0"
-ENGINE_VERSION: &str = "0.4.1"
+ENGINE_VERSION: &str = "0.4.2"
 ScanOptions: Clone + Debug + Default
   max_file_size: u64 (2 MiB)
   max_files: usize (100_000)

@@ -1,6 +1,6 @@
 {
   "name": "atlas-engine-node-consumer-example",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "license": "MIT OR Apache-2.0",

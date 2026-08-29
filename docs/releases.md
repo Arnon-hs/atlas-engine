@@ -1,12 +1,14 @@
 # Release, SBOM and provenance
 
 Status: release workflow and tooling are prepared. Current source version:
-`0.4.1`. Publication, hosted-run success, assets, badges and attestations are
+`0.4.2`. Publication, hosted-run success, assets, badges and attestations are
 claims only when verified against GitHub's release and Actions records.
-The immutable `v0.4.0` source tag exists, but hosted release validation exposed
-a platform-scheduling race and no GitHub Release was created. The prior v0.1,
-v0.2 and v0.3 source baselines are also not claimed as published binary releases.
-Publication requires explicit owner authorization and verified GitHub settings.
+The immutable `v0.4.1` source tag stopped during hosted validation because its
+generated SBOM retained a runner-local build path. The immutable `v0.4.0` source
+tag stopped on a platform-scheduling test race. Neither tag produced a GitHub
+Release. The prior v0.1, v0.2 and v0.3 source baselines are also not claimed as
+published binary releases. Publication requires explicit owner authorization and
+verified GitHub settings.
 
 ## Before tagging
 
@@ -58,8 +60,14 @@ Use the [pinned-source, reviewed-lock SBOM tool setup](security/sbom-toolchain.m
 instead of cargo-cyclonedx 0.5.9's vulnerable upstream install lock. The maintained
 tool generates CycloneDX 1.5 JSON from the Cargo dependency graph for each target.
 The release script adds source revision, tag, target and engine Cargo.lock SHA-256
-as properties and verifies the lockfile did not change. Representative command,
-after the trusted locked build has fetched dependencies:
+as properties and verifies the lockfile did not change. It replaces runner-local
+component references before release serialization and rejects non-portable paths
+in both the sidecar and packaged SBOM. This makes component references independent
+of the checkout location; it does not claim byte-for-byte reproducible SBOMs or
+binaries. Validation also binds the pinned generator, root version, complete
+top-level dependency graph and reserved source/tag/target properties to the
+bounded release identity document. Representative command, after the trusted
+locked build has fetched dependencies:
 
 ```bash
 CARGO_NET_OFFLINE=true cargo cyclonedx \
@@ -99,7 +107,7 @@ Checksums alone detect corruption, not a substituted release. Verify the hosted
 identity and subject digest with GitHub CLI:
 
 ```bash
-gh attestation verify atlas-engine-v0.4.1-aarch64-apple-darwin.tar.gz \
+gh attestation verify atlas-engine-v0.4.2-aarch64-apple-darwin.tar.gz \
   --repo Arnon-hs/atlas-engine \
   --signer-workflow Arnon-hs/atlas-engine/.github/workflows/release.yml \
   --deny-self-hosted-runners

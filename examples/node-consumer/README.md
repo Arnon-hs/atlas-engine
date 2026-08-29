@@ -20,7 +20,7 @@ node --test examples/node-consumer/consumer.test.mjs
 For a Git checkout, add the expected full HEAD commit as the last argument. Obtain
 it in your trusted acquisition step, not by executing input-defined Git commands.
 Omitting it expects `commit_sha: null`; it does not accept an arbitrary commit.
-The default expected engine version is `0.4.1` and schema version is `1.0`.
+The default expected engine version is `0.4.2` and schema version is `1.0`.
 This example deliberately keeps the legacy `--format jsonl` protocol. It does
 not consume or apply schema 2.0 snapshot events; do not pass its own
 `manifest.json` to `index --since`. The latter requires the engine's

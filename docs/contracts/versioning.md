@@ -1,6 +1,6 @@
 # Machine contract and compatibility policy
 
-The current engine version is `0.4.1`; the legacy analyzer, finding and index
+The current engine version is `0.4.2`; the legacy analyzer, finding and index
 record contracts remain `1.0`. Opt-in index snapshot events/manifests use `2.0`.
 The v0.3 security coverage, execution signal, bounded dataflow, advanced
 analysis, history, hotspot and external-evidence contracts each start at `1.0`.
