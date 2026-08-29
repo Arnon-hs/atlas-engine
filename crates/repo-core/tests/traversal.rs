@@ -88,6 +88,134 @@ fn obeys_scoped_ignore_rules_and_distinguishes_policies() {
 }
 
 #[test]
+fn selection_fingerprint_is_portable_and_independent_of_source_and_git_identity() {
+    let first = tempdir().unwrap();
+    let second = tempdir().unwrap();
+    let entries = [
+        (".gitignore", "*.tmp\n"),
+        ("src/.gitignore", "*.log\n"),
+        (".git/info/exclude", "*.local\n"),
+        ("src/main.py", "print('fixture')\n"),
+    ];
+    inert_git(first.path());
+    inert_git(second.path());
+    for (path, contents) in entries {
+        put(first.path(), path, contents);
+    }
+    for (path, contents) in entries.into_iter().rev() {
+        put(second.path(), path, contents);
+    }
+    let scan = |root: &Path, threads| {
+        Repository::open(
+            root,
+            ScanOptions {
+                threads,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .selection_fingerprint
+    };
+    let expected = scan(first.path(), 1);
+    assert!(expected == scan(second.path(), 4));
+    assert!(expected.len() == 64 && expected.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    put(second.path(), "src/main.py", "print('changed fixture')\n");
+    put(second.path(), "new.py", "pass\n");
+    put(
+        second.path(),
+        ".git/index",
+        index(&["src/main.py", "new.py"]),
+    );
+    put(
+        second.path(),
+        ".git/refs/heads/main",
+        "abcdef0123456789abcdef0123456789abcdef0123\n",
+    );
+    assert!(expected == scan(second.path(), 2));
+}
+
+#[test]
+fn selection_fingerprint_tracks_changed_removed_and_empty_ignore_scopes() {
+    let temp = tempdir().unwrap();
+    inert_git(temp.path());
+    let scan = || {
+        Repository::open(temp.path(), ScanOptions::default())
+            .unwrap()
+            .selection_fingerprint
+    };
+    let absent = scan();
+    for path in [".gitignore", "nested/.gitignore", ".git/info/exclude"] {
+        put(temp.path(), path, "");
+        let empty_scope = scan();
+        assert!(
+            empty_scope != absent,
+            "An empty scope must differ from absence"
+        );
+        put(temp.path(), path, "*.tmp\n");
+        let original = scan();
+        assert!(original != empty_scope);
+        put(temp.path(), path, "*.log\n");
+        assert!(
+            scan() != original,
+            "Changed ignore bytes require a new identity"
+        );
+        fs::remove_file(temp.path().join(path)).unwrap();
+        assert!(
+            scan() == absent,
+            "Removed metadata must leave no retained scope"
+        );
+    }
+
+    put(temp.path(), "nested/.gitignore", "*.tmp\n");
+    let nested = scan();
+    fs::remove_file(temp.path().join("nested/.gitignore")).unwrap();
+    put(temp.path(), "other/.gitignore", "*.tmp\n");
+    assert!(
+        scan() != nested,
+        "Identical rules at different scopes are distinct"
+    );
+}
+
+#[test]
+fn selection_fingerprint_retains_metadata_failures_without_exposing_rules() {
+    let temp = tempdir().unwrap();
+    inert_git(temp.path());
+    let scan = || Repository::open(temp.path(), ScanOptions::default()).unwrap();
+    let absent = scan().selection_fingerprint;
+    for path in [".gitignore", "nested/.gitignore", ".git/info/exclude"] {
+        put(temp.path(), path, [0xff]);
+        let invalid = scan();
+        assert!(invalid.selection_fingerprint != absent);
+        assert!(invalid.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ignore_invalid" && diagnostic.relative_path.as_deref() == Some(path)
+        }));
+        put(temp.path(), path, [0xfe]);
+        assert!(scan().selection_fingerprint != invalid.selection_fingerprint);
+
+        put(temp.path(), path, "x".repeat(1025));
+        let limited = scan();
+        assert!(limited.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "ignore_limit" && diagnostic.relative_path.as_deref() == Some(path)
+        }));
+        assert!(limited.selection_fingerprint != absent);
+
+        put(temp.path(), path, "x".repeat(65 * 1024));
+        let unread = scan();
+        let expected_code = if path == ".git/info/exclude" {
+            "git_exclude_unavailable"
+        } else {
+            "file_too_large"
+        };
+        assert!(unread.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == expected_code && diagnostic.relative_path.as_deref() == Some(path)
+        }));
+        assert!(unread.selection_fingerprint == absent);
+        fs::remove_file(temp.path().join(path)).unwrap();
+    }
+}
+
+#[test]
 fn reads_inert_git_tracking_without_interpreting_config() {
     let temp = tempdir().unwrap();
     inert_git(temp.path());
@@ -285,7 +413,21 @@ fn classification_and_path_model_are_portable() {
         normalize_relative_path(Path::new("./a/./b.py")).unwrap(),
         "a/b.py"
     );
-    for bad in ["", ".", "..", "a/../b", "/root/file", "a\\b", "C:/file"] {
+    for bad in [
+        "",
+        ".",
+        "..",
+        "a/../b",
+        "/root/file",
+        "a\\b",
+        "C:/file",
+        "control\u{1b}.py",
+        "newline\n.py",
+        "bidi\u{202e}.py",
+        "isolate\u{2066}.py",
+        "line\u{2028}separator.py",
+        "paragraph\u{2029}separator.py",
+    ] {
         assert!(normalize_relative_path(Path::new(bad)).is_err(), "{bad}");
     }
     assert!(

@@ -8,7 +8,7 @@ mod parser;
 mod secrets;
 mod traversal;
 
-pub use classification::{classify, content_hash, normalize_relative_path};
+pub use classification::{classify, content_hash, is_unsafe_display_char, normalize_relative_path};
 pub use model::*;
 pub use parser::ParserRegistry;
 pub use secrets::{detect_secrets, redact_secrets};

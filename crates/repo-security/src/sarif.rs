@@ -57,7 +57,10 @@ pub fn to_sarif(report: &SecurityReport) -> Value {
                 "repository_id": report.repository.repository_id,
                 "commit_sha": report.repository.git.commit_sha,
                 "truncated": report.truncated,
-                "diagnostic_count": report.diagnostics.len()
+                "diagnostic_count": report.diagnostics.len(),
+                "coverage": &report.coverage,
+                "execution_signal_records": report.signals.len(),
+                "bounded_dataflow_records": report.dataflows.len()
             }
         }]
     })

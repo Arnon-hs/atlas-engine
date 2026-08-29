@@ -347,6 +347,41 @@
         },
         "additionalProperties": true
       }
+    },
+    "advanced": {
+      "type": "object"
+    },
+    "hotspots": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "status",
+        "hotspot_count",
+        "hotspots"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "hotspot_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "hotspots": {
+          "type": "array",
+          "maxItems": 100000
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

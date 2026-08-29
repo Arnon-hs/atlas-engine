@@ -16,7 +16,9 @@ namespace; no AtlasRepo credentials, schema, API, queue or model dependency exis
 
 CLI consumers must capture bounded stderr, require successful process completion,
 and store versions and commit identity. Scout never disables index redaction.
-Incremental indexing will use explicit upsert/delete events in a future contract.
+Schema 2.0 snapshot indexing now uses explicit upsert/delete events and complete
+manifests; consumers opt in and validate the full transaction. v0.3 coverage,
+advanced analysis and external-evidence metadata remain separate opt-in contracts.
 
 ## Alternatives
 

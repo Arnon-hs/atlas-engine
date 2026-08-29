@@ -70,10 +70,12 @@
     },
     "files_scanned": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Legacy observed count. It is not proof of complete coverage; use coverage when emitted by engine 0.3 or later."
     },
     "findings_by_severity": {
       "type": "object",
+      "description": "Legacy counts of emitted observations. On partial coverage these are lower bounds, not exact zero-result totals.",
       "additionalProperties": {
         "type": "integer",
         "minimum": 0
@@ -81,6 +83,7 @@
     },
     "findings": {
       "type": "array",
+      "description": "Observed findings. Array length is not a completeness signal; require the v0.3 coverage envelope for exact totals.",
       "items": {
         "type": "object",
         "required": [
@@ -217,7 +220,125 @@
     },
     "truncated": {
       "type": "boolean",
-      "description": "True when a budget, parser/input/read error, or omitted diagnostic prevented complete coverage within the selected scan scope. Explicit policy exclusions are outside that scope."
+      "description": "True when a budget, parser/input/read error, or omitted diagnostic prevented the required native security gate from completing. Optional bounded dataflow and explicit policy exclusions do not set this flag."
+    },
+    "signals": {
+      "type": "array",
+      "description": "Optional additive field emitted by engine 0.3 and later. Consumers requiring v0.3 semantics must require it explicitly.",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "kind",
+          "relative_path",
+          "line",
+          "column"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "1.0"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "dataflows": {
+      "type": "array",
+      "description": "Optional additive field emitted by engine 0.3 and later. Consumers requiring v0.3 semantics must require it explicitly.",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "kind",
+          "relative_path",
+          "source_range",
+          "sink_range",
+          "assignment_hops"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Optional additive envelope emitted by engine 0.3 and later. Its absence from an older v1 report means not_reported, never complete zero.",
+      "required": [
+        "schema_version",
+        "status",
+        "required_gate_status",
+        "inventory_files",
+        "finding_count",
+        "signal_count",
+        "domains",
+        "files"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unsupported",
+            "excluded",
+            "not_reported"
+          ]
+        },
+        "required_gate_status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unsupported",
+            "excluded",
+            "not_reported"
+          ]
+        },
+        "inventory_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finding_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "signal_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "domains": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 100000
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

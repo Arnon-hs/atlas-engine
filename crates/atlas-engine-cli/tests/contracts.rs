@@ -3,9 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -13,7 +15,7 @@ fn root() -> PathBuf {
 fn fixtures() -> PathBuf {
     root().join("fixtures/polyglot")
 }
-fn engine(args: &[&str], path: Option<&Path>) -> Output {
+fn engine_command(args: &[&str], path: Option<&Path>) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_atlas-engine"));
     if let Some((verb, rest)) = args.split_first() {
         command.arg(verb);
@@ -25,7 +27,10 @@ fn engine(args: &[&str], path: Option<&Path>) -> Output {
     // An empty PATH additionally proves none of the ordinary repository tools are
     // required. This is not a substitute for OS sandboxing against all execution.
     command.env("PATH", "").env_remove("RUST_LOG");
-    command.output().unwrap()
+    command
+}
+fn engine(args: &[&str], path: Option<&Path>) -> Output {
+    engine_command(args, path).output().unwrap()
 }
 fn successful(output: &Output) {
     assert!(
@@ -59,6 +64,16 @@ fn validate(schema: &str, instance: &Value) {
         errors.is_empty(),
         "schema validation failed: {}",
         errors.join("\n")
+    );
+}
+
+fn assert_invalid(schema: &str, instance: &Value) {
+    let schema: Value =
+        serde_json::from_slice(&fs::read(root().join("schemas").join(schema)).unwrap()).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(
+        validator.iter_errors(instance).next().is_some(),
+        "schema unexpectedly accepted an invalid instance"
     );
 }
 
@@ -202,10 +217,107 @@ fn security_json_jsonl_and_canonical_sarif_are_valid_and_redacted() {
         Some(&fixtures()),
     ));
     validate("security-report-v1.schema.json", &report);
+    let mut legacy_report = report.clone();
+    let legacy_object = legacy_report.as_object_mut().unwrap();
+    legacy_object.remove("signals");
+    legacy_object.remove("dataflows");
+    legacy_object.remove("coverage");
+    validate("security-report-v1.schema.json", &legacy_report);
+    validate("security-coverage-v1.schema.json", &report["coverage"]);
+    let mut invalid_coverage = report["coverage"].clone();
+    let complete_domain = invalid_coverage["files"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|file| file["domains"].as_array_mut().unwrap().iter_mut())
+        .find(|domain| domain["status"] == "complete")
+        .unwrap();
+    complete_domain["stages"]["evaluated"] = Value::Bool(false);
+    assert_invalid("security-coverage-v1.schema.json", &invalid_coverage);
+
+    let complete_repository = tempfile::tempdir().unwrap();
+    fs::write(
+        complete_repository.path().join("clean.py"),
+        "def answer():\n    return 42\n",
+    )
+    .unwrap();
+    let complete_report = json_output(&engine(
+        &["security", "--format", "json"],
+        Some(complete_repository.path()),
+    ));
+    let complete_coverage = &complete_report["coverage"];
+    validate("security-coverage-v1.schema.json", complete_coverage);
+    assert_eq!(complete_coverage["status"], "complete");
+    assert_eq!(complete_coverage["required_gate_status"], "complete");
+
+    let mut impossible_gate = complete_coverage.clone();
+    impossible_gate["required_gate_status"] = Value::from("partial");
+    assert_invalid("security-coverage-v1.schema.json", &impossible_gate);
+    for hostile_path in [
+        "./clean.py",
+        "odd\u{1b}.py",
+        "bidi\u{202e}.py",
+        "line\u{2028}.py",
+        "paragraph\u{2029}.py",
+    ] {
+        let mut invalid_path = complete_coverage.clone();
+        invalid_path["files"][0]["relative_path"] = Value::from(hostile_path);
+        assert_invalid("security-coverage-v1.schema.json", &invalid_path);
+    }
+
+    for stages in [
+        serde_json::json!({"selected": true, "read": false, "parsed": true, "evaluated": false}),
+        serde_json::json!({"selected": true, "read": false, "parsed": null, "evaluated": true}),
+        serde_json::json!({"selected": true, "read": true, "parsed": false, "evaluated": true}),
+    ] {
+        let mut impossible_stages = complete_coverage.clone();
+        let domain = impossible_stages["files"].as_array_mut().unwrap()[0]["domains"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|domain| domain["domain"] == "dangerous_primitives")
+            .unwrap();
+        domain["status"] = Value::from("partial");
+        domain["finding_count"] = Value::Null;
+        domain["signal_count"] = Value::Null;
+        domain["reason_codes"] = serde_json::json!(["fixture_incomplete"]);
+        domain["stages"] = stages;
+        assert_invalid("security-coverage-v1.schema.json", &impossible_stages);
+    }
+    for signal in report["signals"].as_array().unwrap() {
+        validate("execution-signal-v1.schema.json", signal);
+    }
+    for dataflow in report["dataflows"].as_array().unwrap() {
+        validate("bounded-dataflow-signal-v1.schema.json", dataflow);
+    }
+    if report["coverage"]["status"] != "complete" {
+        assert_eq!(report["coverage"]["finding_count"], Value::Null);
+        assert_eq!(report["coverage"]["signal_count"], Value::Null);
+    }
     let findings = report["findings"].as_array().unwrap();
     assert!(findings.iter().any(|f| f["kind"] == "secret"));
     assert!(findings.iter().any(|f| f["kind"] == "dangerous_primitive"));
     assert!(findings.iter().any(|f| f["kind"] == "configuration"));
+
+    let mixed = tempfile::tempdir().unwrap();
+    fs::write(mixed.path().join("clean.py"), "value = 1\n").unwrap();
+    fs::write(mixed.path().join("blob.bin"), [0, 159, 146, 150]).unwrap();
+    let mixed_report = json_output(&engine(
+        &["security", "--format", "json"],
+        Some(mixed.path()),
+    ));
+    validate(
+        "security-coverage-v1.schema.json",
+        &mixed_report["coverage"],
+    );
+    assert!(
+        mixed_report["coverage"]["domains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|domain| domain["status"] == "complete"
+                && !domain["reason_codes"].as_array().unwrap().is_empty())
+    );
     let lines = jsonl_output(&engine(
         &[
             "security",
@@ -281,6 +393,14 @@ fn large_binary_invalid_utf8_and_symlinks_are_skipped_without_path_escape() {
     assert!(!String::from_utf8_lossy(&output.stderr).contains(outside.path().to_str().unwrap()));
     let doctor = json_output(&engine(&["doctor", "--format", "json"], Some(dir.path())));
     validate("doctor-v1.schema.json", &doctor);
+    assert_eq!(doctor["hotspot_report_schema_version"], "1.0");
+    assert!(
+        doctor["extended_ast_languages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|language| language == "rust")
+    );
     assert!(doctor["diagnostics"].as_array().unwrap().len() >= 2);
 }
 
@@ -370,6 +490,23 @@ fn hostile_filenames_cannot_inject_json_sarif_or_terminal_escape_sequences() {
     let dir = tempfile::tempdir().unwrap();
     let filename = "odd\u{1b}[31m\nname #\"?.py";
     fs::write(dir.path().join(filename), "eval(value)\n").unwrap();
+    let report = json_output(&engine(&["security", "--format", "json"], Some(dir.path())));
+    validate("security-report-v1.schema.json", &report);
+    validate("security-coverage-v1.schema.json", &report["coverage"]);
+    for signal in report["signals"].as_array().unwrap() {
+        validate("execution-signal-v1.schema.json", signal);
+    }
+    for dataflow in report["dataflows"].as_array().unwrap() {
+        validate("bounded-dataflow-signal-v1.schema.json", dataflow);
+    }
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "path_rejected"
+                && diagnostic["relative_path"].is_null())
+    );
     for format in ["json", "jsonl", "sarif", "human"] {
         let output = engine(&["security", "--format", format], Some(dir.path()));
         successful(&output);
@@ -381,6 +518,31 @@ fn hostile_filenames_cannot_inject_json_sarif_or_terminal_escape_sequences() {
                 &serde_json::from_slice(&output.stdout).unwrap(),
             );
         }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unicode_line_separators_cannot_forge_terminal_diagnostics() {
+    for separator in ['\u{2028}', '\u{2029}'] {
+        let dir = tempfile::tempdir().unwrap();
+        let filename = format!("evil{separator}[critical] forged.py");
+        fs::write(dir.path().join(filename), "def broken(:\n").unwrap();
+        let output = engine(&["security", "--format", "human"], Some(dir.path()));
+        successful(&output);
+        let encoded = separator.to_string();
+        assert!(
+            !output
+                .stdout
+                .windows(encoded.len())
+                .any(|part| part == encoded.as_bytes())
+        );
+        assert!(
+            !output
+                .stderr
+                .windows(encoded.len())
+                .any(|part| part == encoded.as_bytes())
+        );
     }
 }
 
@@ -421,6 +583,36 @@ fn exit_codes_are_stable_and_findings_require_explicit_ci_policy() {
         "security-report-v1.schema.json",
         &serde_json::from_slice(&failed.stdout).unwrap(),
     );
+}
+
+#[test]
+fn command_help_advertises_only_formats_the_command_accepts() {
+    for (command, allowed, forbidden) in [
+        ("analyze", &["human", "json"][..], &["jsonl", "sarif"][..]),
+        (
+            "index",
+            &["human", "json", "jsonl", "events-jsonl"][..],
+            &["sarif"][..],
+        ),
+        (
+            "security",
+            &["human", "json", "jsonl", "sarif"][..],
+            &["events-jsonl"][..],
+        ),
+        ("evidence", &["human", "json"][..], &["jsonl", "sarif"][..]),
+        ("doctor", &["human", "json"][..], &["jsonl", "sarif"][..]),
+        ("version", &["human", "json"][..], &["jsonl", "sarif"][..]),
+    ] {
+        let output = engine(&[command, "--help"], None);
+        successful(&output);
+        let help = String::from_utf8(output.stdout).unwrap();
+        for value in allowed {
+            assert!(help.contains(value), "{command} help omits {value}");
+        }
+        for value in forbidden {
+            assert!(!help.contains(value), "{command} help advertises {value}");
+        }
+    }
 }
 
 #[test]
@@ -528,4 +720,759 @@ fn version_contract_does_not_need_a_repository() {
     let version = json_output(&engine(&["version", "--format", "json"], None));
     assert_eq!(version["schema_version"], "1.0");
     assert_eq!(version["engine_version"], env!("CARGO_PKG_VERSION"));
+    for (field, expected) in [
+        ("index_snapshot_schema_version", "2.0"),
+        ("security_coverage_schema_version", "1.0"),
+        ("execution_signal_schema_version", "1.0"),
+        ("bounded_dataflow_schema_version", "1.0"),
+        ("advanced_analysis_schema_version", "1.0"),
+        ("history_manifest_schema_version", "1.0"),
+        ("hotspot_report_schema_version", "1.0"),
+        ("external_security_evidence_schema_version", "1.0"),
+    ] {
+        assert_eq!(version[field], expected);
+    }
+}
+
+fn events_engine(path: &Path, extra: &[&str]) -> Output {
+    let mut args = vec![
+        "index",
+        "--format",
+        "events-jsonl",
+        "--repo-id",
+        "test/events",
+    ];
+    args.extend_from_slice(extra);
+    engine(&args, Some(path))
+}
+
+fn validated_events(output: &Output) -> Vec<Value> {
+    assert!(output.stdout.ends_with(b"\n"));
+    let text = std::str::from_utf8(&output.stdout).unwrap();
+    let events: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for event in &events {
+        validate("index-event-v2.schema.json", event);
+        if event["type"] == "chunk.upsert" {
+            validate("index-record-v1.schema.json", &event["record"]);
+        }
+    }
+    assert_eq!(events.first().unwrap()["type"], "snapshot.start");
+    if let Some(complete) = events.last().filter(|e| e["type"] == "snapshot.complete") {
+        validate("index-manifest-v2.schema.json", &complete["manifest"]);
+        let footer_offset = text.rfind("\n").unwrap();
+        let preceding_end = text[..footer_offset].rfind('\n').unwrap() + 1;
+        assert_eq!(
+            complete["events_hash"],
+            blake3::hash(&output.stdout[..preceding_end])
+                .to_hex()
+                .to_string()
+        );
+        for (event_type, counter) in [("chunk.upsert", "upserts"), ("chunk.delete", "deletes")] {
+            assert_eq!(
+                complete[counter].as_u64().unwrap() as usize,
+                events.iter().filter(|e| e["type"] == event_type).count()
+            );
+        }
+        assert_eq!(complete["snapshot_id"], complete["manifest"]["snapshot_id"]);
+    }
+    events
+}
+
+fn manifest(events: &[Value]) -> &Value {
+    let last = events.last().unwrap();
+    assert_eq!(last["type"], "snapshot.complete");
+    &last["manifest"]
+}
+
+fn upserts(events: &[Value]) -> BTreeMap<String, Value> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "chunk.upsert")
+        .map(|event| {
+            let record = &event["record"];
+            (
+                record["chunk_id"].as_str().unwrap().to_owned(),
+                record.clone(),
+            )
+        })
+        .collect()
+}
+
+fn assert_input_rejected(output: &Output) {
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+}
+
+fn assert_aborted(output: &Output) -> Vec<Value> {
+    assert_eq!(output.status.code(), Some(6));
+    let events = validated_events(output);
+    assert_eq!(events.last().unwrap()["type"], "snapshot.abort");
+    assert!(
+        !events.iter().any(|event| {
+            event["type"] == "chunk.delete" || event["type"] == "snapshot.complete"
+        })
+    );
+    events
+}
+
+#[test]
+fn events_full_snapshot_and_empty_snapshot_have_verified_completion_manifests() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty_output = events_engine(dir.path(), &[]);
+    successful(&empty_output);
+    let empty = validated_events(&empty_output);
+    assert_eq!(empty.len(), 2);
+    assert_eq!(manifest(&empty)["files"], serde_json::json!([]));
+    assert_eq!(empty[0]["base_snapshot_id"], Value::Null);
+    assert_eq!(
+        manifest(&empty)["engine_version"],
+        env!("CARGO_PKG_VERSION")
+    );
+
+    fs::write(dir.path().join("a.py"), "def answer():\n    return 42\n").unwrap();
+    let first = events_engine(dir.path(), &[]);
+    successful(&first);
+    let full = validated_events(&first);
+    assert!(!upserts(&full).is_empty());
+    assert_eq!(manifest(&full)["files"][0]["relative_path"], "a.py");
+    for workers in ["1", "4"] {
+        let repeated = events_engine(dir.path(), &["--threads", workers]);
+        successful(&repeated);
+        assert_eq!(first.stdout, repeated.stdout);
+    }
+    let legacy = jsonl_output(&engine(
+        &["index", "--repo-id", "test/events"],
+        Some(dir.path()),
+    ));
+    let event_records: Vec<_> = full
+        .iter()
+        .filter(|event| event["type"] == "chunk.upsert")
+        .map(|event| event["record"].clone())
+        .collect();
+    assert_eq!(legacy, event_records);
+}
+
+#[test]
+fn events_delta_applied_to_base_equals_fresh_full_after_commit_rebinding() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join(".git")).unwrap();
+    fs::write(
+        dir.path().join(".git/HEAD"),
+        format!("{}\n", "1".repeat(40)),
+    )
+    .unwrap();
+    for (name, value) in [("a.py", 1), ("b.py", 2), ("keep.py", 3)] {
+        fs::write(
+            dir.path().join(name),
+            format!("def answer():\n    return {value}\n"),
+        )
+        .unwrap();
+    }
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+
+    fs::write(dir.path().join("a.py"), "def answer():\n    return 99\n").unwrap();
+    fs::remove_file(dir.path().join("b.py")).unwrap();
+    fs::write(dir.path().join("new.py"), "def added():\n    return 4\n").unwrap();
+    fs::write(
+        dir.path().join(".git/HEAD"),
+        format!("{}\n", "2".repeat(40)),
+    )
+    .unwrap();
+    let delta_output = events_engine(dir.path(), &["--since", baseline.to_str().unwrap()]);
+    successful(&delta_output);
+    let delta = validated_events(&delta_output);
+    assert_eq!(delta[0]["base_snapshot_id"], manifest(&base)["snapshot_id"]);
+    assert_eq!(
+        delta.last().unwrap()["base_snapshot_id"],
+        manifest(&base)["snapshot_id"]
+    );
+    assert!(delta.last().unwrap()["deletes"].as_u64().unwrap() > 0);
+    assert!(delta.last().unwrap()["unchanged"].as_u64().unwrap() > 0);
+
+    let mut applied = upserts(&base);
+    for event in &delta {
+        match event["type"].as_str().unwrap() {
+            "chunk.upsert" => {
+                let record = event["record"].clone();
+                applied.insert(record["chunk_id"].as_str().unwrap().to_owned(), record);
+            }
+            "chunk.delete" => {
+                let old = applied.remove(event["chunk_id"].as_str().unwrap()).unwrap();
+                assert_eq!(event["relative_path"], old["relative_path"]);
+                let old_file = manifest(&base)["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|file| file["relative_path"] == event["relative_path"])
+                    .unwrap();
+                let old_chunk = old_file["chunks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|chunk| chunk["chunk_id"] == event["chunk_id"])
+                    .unwrap();
+                assert_eq!(event["previous_record_hash"], old_chunk["record_hash"]);
+            }
+            _ => {}
+        }
+    }
+    for record in applied.values_mut() {
+        record["commit_sha"] = manifest(&delta)["commit_sha"].clone();
+    }
+    let full_output = events_engine(dir.path(), &[]);
+    successful(&full_output);
+    let full = validated_events(&full_output);
+    assert_eq!(applied, upserts(&full));
+    assert_eq!(manifest(&delta), manifest(&full));
+    assert_eq!(manifest(&full)["commit_sha"], "2".repeat(40));
+
+    // Reusing the completed target manifest creates a no-op transaction, not a
+    // second application of the previous deletes/upserts.
+    fs::write(&baseline, serde_json::to_vec(manifest(&delta)).unwrap()).unwrap();
+    let noop_output = events_engine(dir.path(), &["--since", baseline.to_str().unwrap()]);
+    successful(&noop_output);
+    let noop = validated_events(&noop_output);
+    assert_eq!(noop.len(), 2);
+    assert_eq!(noop.last().unwrap()["upserts"], 0);
+    assert_eq!(noop.last().unwrap()["deletes"], 0);
+    assert_eq!(manifest(&noop), manifest(&full));
+}
+
+#[test]
+fn events_delta_can_commit_a_verified_empty_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("gone.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    fs::remove_file(dir.path().join("gone.py")).unwrap();
+    let output = events_engine(dir.path(), &["--since", baseline.to_str().unwrap()]);
+    successful(&output);
+    let delta = validated_events(&output);
+    assert_eq!(manifest(&delta)["files"], serde_json::json!([]));
+    assert_eq!(delta.last().unwrap()["upserts"], 0);
+    assert_eq!(delta.last().unwrap()["unchanged"], 0);
+    assert_eq!(
+        delta.last().unwrap()["deletes"].as_u64().unwrap() as usize,
+        upserts(&base).len()
+    );
+}
+
+#[test]
+fn events_require_repository_identity_and_since_requires_event_format() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["index", "--format", "events-jsonl"],
+        vec!["index", "--format", "events-jsonl", "--repo-id", ""],
+        vec!["index", "--since", "HEAD"],
+        vec!["index", "--format", "json", "--since", "HEAD"],
+        vec!["analyze", "--format", "events-jsonl"],
+    ] {
+        let output = engine(&args, Some(dir.path()));
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+    let missing_path = dir.path().join("not-a-git-ref");
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", missing_path.to_str().unwrap()],
+    ));
+}
+
+#[test]
+fn events_reject_bad_or_incompatible_manifests_before_writing_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    let invalid_bytes = [b"{".to_vec(), b"null".to_vec(), vec![0xff, 0xfe]];
+    for bytes in invalid_bytes {
+        fs::write(&baseline, bytes).unwrap();
+        assert_input_rejected(&events_engine(
+            dir.path(),
+            &["--since", baseline.to_str().unwrap()],
+        ));
+    }
+    for field in ["commit_sha", "files", "complete"] {
+        let mut changed = manifest(&base).clone();
+        changed.as_object_mut().unwrap().remove(field);
+        fs::write(&baseline, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert_input_rejected(&events_engine(
+            dir.path(),
+            &["--since", baseline.to_str().unwrap()],
+        ));
+    }
+    let encoded = serde_json::to_string(manifest(&base)).unwrap();
+    let duplicate = format!("{{\"repository_id\":\"test/events\",{}", &encoded[1..]);
+    fs::write(&baseline, duplicate).unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    for (field, value) in [
+        ("schema_version", Value::from("99.0")),
+        ("engine_version", Value::from("0.0.1")),
+        ("repository_id", Value::from("other/repository")),
+        ("snapshot_id", Value::from("f".repeat(64))),
+        ("complete", Value::Bool(false)),
+        ("unexpected", Value::Bool(true)),
+    ] {
+        let mut changed = manifest(&base).clone();
+        changed[field] = value;
+        fs::write(&baseline, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert_input_rejected(&events_engine(
+            dir.path(),
+            &["--since", baseline.to_str().unwrap()],
+        ));
+    }
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &[
+            "--since",
+            baseline.to_str().unwrap(),
+            "--max-chunk-bytes",
+            "8",
+        ],
+    ));
+    assert_input_rejected(&engine(
+        &[
+            "index",
+            "--format",
+            "events-jsonl",
+            "--repo-id",
+            "other/repository",
+            "--since",
+            baseline.to_str().unwrap(),
+        ],
+        Some(dir.path()),
+    ));
+}
+
+#[test]
+fn events_reject_oversized_and_inside_input_baseline_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let baseline = outside.path().join("oversized.json");
+    fs::File::create(&baseline)
+        .unwrap()
+        .set_len(16 * 1024 * 1024 + 1)
+        .unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let inside = dir.path().join("baseline.json");
+    fs::write(&inside, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", inside.to_str().unwrap()],
+    ));
+}
+
+// Baseline rejection must be bounded even for special files with no writer.
+// Output should be empty, so polling cannot block on a full stdout pipe here.
+#[cfg(unix)]
+fn bounded_baseline_rejection(path: &Path, baseline: &Path) {
+    let mut child = engine_command(
+        &[
+            "index",
+            "--format",
+            "events-jsonl",
+            "--repo-id",
+            "test/events",
+            "--since",
+            baseline.to_str().unwrap(),
+        ],
+        Some(path),
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let started = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > Duration::from_secs(3) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("baseline rejection exceeded its deadline");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_input_rejected(&child.wait_with_output().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn events_reject_linked_and_special_baselines_without_following_or_blocking() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    let linked = outside.path().join("link.json");
+    std::os::unix::fs::symlink(&baseline, &linked).unwrap();
+    bounded_baseline_rejection(dir.path(), &linked);
+    let socket = outside.path().join("socket");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    bounded_baseline_rejection(dir.path(), &socket);
+    #[cfg(target_os = "linux")]
+    {
+        let fifo = outside.path().join("fifo");
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        bounded_baseline_rejection(dir.path(), &fifo);
+    }
+}
+
+#[test]
+fn events_incomplete_targets_abort_without_deletes_or_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("safe.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    fs::remove_file(dir.path().join("safe.py")).unwrap();
+    let invalid = dir.path().join("invalid.py");
+    fs::write(&invalid, "def broken(:\n    pass\n").unwrap();
+    assert_aborted(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    fs::remove_file(&invalid).unwrap();
+    fs::File::create(dir.path().join("large.py"))
+        .unwrap()
+        .set_len(2 * 1024 * 1024 + 1)
+        .unwrap();
+    assert_aborted(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    fs::remove_file(dir.path().join("large.py")).unwrap();
+    // An existing baseline path becoming binary is not proof of deletion.
+    fs::write(dir.path().join("safe.py"), [0, 1, 2, 3]).unwrap();
+    let binary = assert_aborted(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    assert!(
+        binary.last().unwrap()["reason_codes"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("snapshot.base_path_excluded"))
+    );
+}
+
+#[test]
+fn events_scope_changes_cannot_be_mistaken_for_source_deletions() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("kept.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    fs::write(dir.path().join(".gitignore"), "kept.py\n").unwrap();
+    // Changed selection is incompatible before any streaming mutation.
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+}
+
+#[test]
+fn advanced_analysis_and_bounded_history_hotspots_validate() {
+    let repository = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir(repository.path().join(".git")).unwrap();
+    let commit = "2".repeat(40);
+    fs::write(repository.path().join(".git/HEAD"), format!("{commit}\n")).unwrap();
+    fs::write(
+        repository.path().join("a.py"),
+        "def choose(value):\n    if value:\n        return 1\n    return 0\n",
+    )
+    .unwrap();
+    let dynamic_argument = "private_dynamic_module_fixture";
+    fs::write(
+        repository.path().join("dynamic.ts"),
+        format!("const target = '{dynamic_argument}';\nimport(target);\n"),
+    )
+    .unwrap();
+    fs::write(
+        repository.path().join("lib.rs"),
+        "pub fn stable() -> u8 { 1 }\n",
+    )
+    .unwrap();
+
+    let snapshot_output = events_engine(repository.path(), &[]);
+    successful(&snapshot_output);
+    let events = validated_events(&snapshot_output);
+    let snapshot = manifest(&events).clone();
+    let snapshot_path = outside.path().join("snapshot.json");
+    fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let mut history = repo_analyzer::HistoryManifest {
+        schema_version: repo_analyzer::HISTORY_MANIFEST_SCHEMA_VERSION.into(),
+        producer: repo_analyzer::HistoryProducer {
+            name: "fixture-history".into(),
+            version: "1.0.0".into(),
+        },
+        repository_id: "test/events".into(),
+        base_commit_sha: "1".repeat(40),
+        target_commit_sha: commit,
+        configuration_id: snapshot["configuration_id"].as_str().unwrap().into(),
+        history_mode: repo_analyzer::HistoryMode::FirstParent,
+        rename_mode: repo_analyzer::RenameMode::NoFollow,
+        complete: true,
+        entries: vec![
+            repo_analyzer::HistoryEntry {
+                relative_path: "a.py".into(),
+                commit_count: Some(3),
+                lines_added: Some(5),
+                lines_deleted: Some(1),
+            },
+            repo_analyzer::HistoryEntry {
+                relative_path: "dynamic.ts".into(),
+                commit_count: Some(1),
+                lines_added: None,
+                lines_deleted: None,
+            },
+            repo_analyzer::HistoryEntry {
+                relative_path: "lib.rs".into(),
+                commit_count: Some(1),
+                lines_added: None,
+                lines_deleted: None,
+            },
+        ],
+        manifest_id: "0".repeat(64),
+    };
+    history.manifest_id = repo_analyzer::history_manifest_id(&history).unwrap();
+    let history_path = outside.path().join("history.json");
+    validate(
+        "history-manifest-v1.schema.json",
+        &serde_json::to_value(&history).unwrap(),
+    );
+    fs::write(&history_path, serde_json::to_vec(&history).unwrap()).unwrap();
+
+    let output = engine(
+        &[
+            "analyze",
+            "--format",
+            "json",
+            "--repo-id",
+            "test/events",
+            "--advanced",
+            "--history-manifest",
+            history_path.to_str().unwrap(),
+            "--accepted-snapshot",
+            snapshot_path.to_str().unwrap(),
+        ],
+        Some(repository.path()),
+    );
+    let report = json_output(&output);
+    validate("analyzer-v1.schema.json", &report);
+    validate("analyzer-advanced-v1.schema.json", &report["advanced"]);
+    validate("hotspot-report-v1.schema.json", &report["hotspots"]);
+    for hostile_path in [
+        "./dynamic.ts",
+        "odd\u{1b}.ts",
+        "bidi\u{202e}.ts",
+        "line\u{2028}.ts",
+        "paragraph\u{2029}.ts",
+    ] {
+        let mut invalid_path = report["advanced"].clone();
+        invalid_path["files"][0]["relative_path"] = Value::from(hostile_path);
+        assert_invalid("analyzer-advanced-v1.schema.json", &invalid_path);
+    }
+    let dynamic = report["advanced"]["dependency_graph"]["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|observation| observation["resolution"] == "dynamic_unresolved")
+        .unwrap();
+    assert_eq!(dynamic["source_path"], "dynamic.ts");
+    assert!(dynamic["target_path"].is_null());
+    assert!(report["advanced"]["dependency_graph"]["observation_count"].is_null());
+    assert!(report["advanced"]["files"].as_array().unwrap().iter().any(
+        |file| file["relative_path"] == "lib.rs" && file["dependency_status"] == "unsupported"
+    ));
+    assert!(
+        !serde_json::to_string(&report)
+            .unwrap()
+            .contains(dynamic_argument)
+    );
+    assert_eq!(report["hotspots"]["status"], "complete");
+    assert_eq!(report["hotspots"]["hotspots"][0]["commit_count"], 3);
+    assert_eq!(
+        report["hotspots"]["hotspots"][0]["decision_commit_product"],
+        3
+    );
+}
+
+#[test]
+fn passive_external_evidence_is_bound_and_result_digest_is_verified() {
+    let repository = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir(repository.path().join(".git")).unwrap();
+    fs::write(
+        repository.path().join(".git/HEAD"),
+        format!("{}\n", "3".repeat(40)),
+    )
+    .unwrap();
+    fs::write(repository.path().join("a.py"), "value = 1\n").unwrap();
+    let snapshot_output = events_engine(repository.path(), &[]);
+    successful(&snapshot_output);
+    let events = validated_events(&snapshot_output);
+    let snapshot = manifest(&events).clone();
+    let snapshot_path = outside.path().join("snapshot.json");
+    fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let result_bytes = br#"{"runs":[]}"#;
+    let result_path = outside.path().join("result.sarif");
+    fs::write(&result_path, result_bytes).unwrap();
+    let result_sha = format!("{:x}", Sha256::digest(result_bytes));
+    let mut evidence = repo_security::ExternalSecurityEvidence {
+        schema_version: repo_security::EXTERNAL_EVIDENCE_SCHEMA_VERSION.into(),
+        evidence_id: "0".repeat(64),
+        subject: repo_security::EvidenceSubject {
+            repository_id: snapshot["repository_id"].as_str().unwrap().into(),
+            commit_sha: repo_security::Nullable(snapshot["commit_sha"].as_str().map(str::to_owned)),
+            snapshot_id: snapshot["snapshot_id"].as_str().unwrap().into(),
+            configuration_id: snapshot["configuration_id"].as_str().unwrap().into(),
+            selection_id: snapshot["selection_id"].as_str().unwrap().into(),
+        },
+        producer: repo_security::EvidenceProducer {
+            runner_name: "fixture-runner".into(),
+            runner_version: "1.0.0".into(),
+            runner_binary_sha256: "4".repeat(64),
+            tool_name: "zizmor".into(),
+            tool_version: "1.29.0".into(),
+            tool_binary_sha256: "5".repeat(64),
+        },
+        domain: repo_security::EvidenceDomain::Cicd,
+        materials: vec![
+            repo_security::EvidenceMaterial {
+                kind: repo_security::MaterialKind::Configuration,
+                state: repo_security::MaterialState::Present,
+                sha256: repo_security::Nullable::some("6".repeat(64)),
+            },
+            repo_security::EvidenceMaterial {
+                kind: repo_security::MaterialKind::Database,
+                state: repo_security::MaterialState::NotApplicable,
+                sha256: repo_security::Nullable::null(),
+            },
+            repo_security::EvidenceMaterial {
+                kind: repo_security::MaterialKind::Ruleset,
+                state: repo_security::MaterialState::NotApplicable,
+                sha256: repo_security::Nullable::null(),
+            },
+        ],
+        scope: repo_security::EvidenceScope {
+            include_patterns: vec![".".into()],
+            exclude_patterns: vec![],
+            languages: vec!["python".into()],
+            selected_files: repo_security::Nullable::some(1),
+            evaluated_files: repo_security::Nullable::some(1),
+        },
+        execution: repo_security::EvidenceExecution {
+            status: repo_security::EvidenceStatus::Complete,
+            termination_reason: repo_security::TerminationReason::Success,
+            exit_code: repo_security::Nullable::some(0),
+            network_access: repo_security::NetworkAccess::Denied,
+            repository_access: repo_security::RepositoryAccess::ReadOnly,
+            repository_code_executed: false,
+        },
+        result: repo_security::EvidenceResult {
+            state: repo_security::ResultState::Present,
+            format: repo_security::Nullable::some("sarif-2.1.0".into()),
+            sha256: repo_security::Nullable::some(result_sha),
+            size_bytes: repo_security::Nullable::some(result_bytes.len() as u64),
+            finding_count: repo_security::Nullable::some(0),
+            findings_by_severity: repo_security::Nullable::some(repo_security::FindingCounts {
+                info: 0,
+                low: 0,
+                medium: 0,
+                high: 0,
+                critical: 0,
+            }),
+        },
+    };
+    evidence.evidence_id = repo_security::external_evidence_id(&evidence);
+    let evidence_path = outside.path().join("evidence.json");
+    fs::write(&evidence_path, serde_json::to_vec(&evidence).unwrap()).unwrap();
+
+    let output = engine(
+        &[
+            "evidence",
+            evidence_path.to_str().unwrap(),
+            "--against",
+            snapshot_path.to_str().unwrap(),
+            "--repository-root",
+            repository.path().to_str().unwrap(),
+            "--result",
+            result_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    let accepted = json_output(&output);
+    validate("external-security-evidence-v1.schema.json", &accepted);
+    assert_eq!(accepted["evidence_id"], evidence.evidence_id);
+    for repository_id in [
+        "/Users/fixture/private",
+        "C:/fixture/private",
+        "https://host.example/repository",
+        " /Users/fixture/private",
+    ] {
+        let mut unsafe_subject = accepted.clone();
+        unsafe_subject["subject"]["repository_id"] = Value::from(repository_id);
+        assert_invalid("external-security-evidence-v1.schema.json", &unsafe_subject);
+    }
+
+    fs::write(&result_path, b"tampered").unwrap();
+    let rejected = engine(
+        &[
+            "evidence",
+            evidence_path.to_str().unwrap(),
+            "--against",
+            snapshot_path.to_str().unwrap(),
+            "--repository-root",
+            repository.path().to_str().unwrap(),
+            "--result",
+            result_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert_eq!(rejected.status.code(), Some(3));
+    assert!(rejected.stdout.is_empty());
 }

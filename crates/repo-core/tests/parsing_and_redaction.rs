@@ -2,8 +2,8 @@ use std::path::Path;
 
 use proptest::prelude::*;
 use repo_core::{
-    Language, ParserRegistry, SymbolKind, classify, detect_secrets, normalize_relative_path,
-    redact_secrets,
+    CoverageStatus, DataFlowKind, Language, ParserRegistry, SymbolKind, classify, detect_secrets,
+    normalize_relative_path, redact_secrets,
 };
 
 fn fixture_token() -> String {
@@ -130,6 +130,86 @@ fn extracts_python_decorators_methods_nested_functions_and_byte_ranges() {
 }
 
 #[test]
+fn extended_profile_adds_rust_and_shell_without_changing_legacy_parsing() {
+    let registry = ParserRegistry::default();
+    let rust =
+        "fn top() { if ready { run(); } }\nimpl Worker { fn execute(&self) { loop { break; } } }\n";
+    let legacy = registry.parse(Language::Rust, "src/lib.rs", rust, 1000);
+    assert_eq!(legacy.status, CoverageStatus::Unsupported);
+    assert!(legacy.symbols.is_empty());
+
+    let parsed = registry.parse_extended(Language::Rust, "src/lib.rs", rust, 1000);
+    assert_eq!(parsed.status, CoverageStatus::Complete);
+    assert!(
+        parsed
+            .symbols
+            .iter()
+            .any(|symbol| { symbol.name == "top" && symbol.kind == SymbolKind::Function })
+    );
+    assert!(
+        parsed
+            .symbols
+            .iter()
+            .any(|symbol| { symbol.name == "execute" && symbol.kind == SymbolKind::Method })
+    );
+    let metrics = parsed.structural_metrics.unwrap();
+    assert_eq!(metrics.functions, 2);
+    assert_eq!(metrics.branch_points, 2);
+
+    let shell = registry.parse_extended(
+        Language::Shell,
+        "scripts/run.sh",
+        "run() { if ready; then echo ok; fi; }\n",
+        1000,
+    );
+    assert_eq!(shell.status, CoverageStatus::Complete);
+    assert!(shell.symbols.iter().any(|symbol| symbol.name == "run"));
+    assert_eq!(shell.structural_metrics.unwrap().branch_points, 1);
+}
+
+#[test]
+fn extended_python_metrics_and_bounded_parameter_flows_are_explicit() {
+    let source = "import subprocess\n\ndef run(command):\n    value = 'echo ' + command\n    subprocess.run(value, shell=True)\n\ndef dynamic(code):\n    copied = code\n    eval(copied)\n\ndef fixed():\n    subprocess.run('echo fixed', shell=True)\n";
+    let parsed = ParserRegistry::default().parse_extended(Language::Python, "app.py", source, 1000);
+    assert_eq!(parsed.status, CoverageStatus::Complete);
+    assert_eq!(parsed.dataflow_status, CoverageStatus::Complete);
+    assert_eq!(parsed.dataflows.len(), 2);
+    assert!(parsed.dataflows.iter().any(|flow| {
+        flow.kind == DataFlowKind::PythonParameterToShellExecution && flow.assignment_hops == 1
+    }));
+    assert!(parsed.dataflows.iter().any(|flow| {
+        flow.kind == DataFlowKind::PythonParameterToDynamicEvaluation && flow.assignment_hops == 1
+    }));
+    assert!(parsed.dataflows.iter().all(|flow| {
+        flow.source_range.start_byte < flow.sink_range.start_byte
+            && flow.sink_range.end_byte <= source.len()
+    }));
+    assert_eq!(parsed.structural_metrics.unwrap().functions, 3);
+
+    let partial = ParserRegistry::default().parse_extended(
+        Language::Python,
+        "app.py",
+        "def run(command):\n    if command:\n        eval(command)\n",
+        1000,
+    );
+    assert_eq!(partial.status, CoverageStatus::Complete);
+    assert_eq!(partial.dataflow_status, CoverageStatus::Partial);
+}
+
+#[test]
+fn extended_python_flow_inspects_return_and_nested_assignment_calls() {
+    let source = "def direct(value):\n    return eval(value)\n\ndef nested(value):\n    result = wrapper(eval(value))\n    return result\n";
+    let parsed = ParserRegistry::default().parse_extended(Language::Python, "app.py", source, 1000);
+    assert_eq!(parsed.status, CoverageStatus::Complete);
+    assert_eq!(parsed.dataflow_status, CoverageStatus::Complete);
+    assert_eq!(parsed.dataflows.len(), 2);
+    assert!(parsed.dataflows.iter().all(|flow| {
+        flow.kind == DataFlowKind::PythonParameterToDynamicEvaluation
+            && flow.source_range.start_byte < flow.sink_range.start_byte
+    }));
+}
+
+#[test]
 fn imports_are_actual_syntax_bindings_and_type_only_imports_are_omitted() {
     for (language, path, source, expected) in [
         (
@@ -184,6 +264,35 @@ fn imports_are_actual_syntax_bindings_and_type_only_imports_are_omitted() {
             })
             .collect();
         assert_eq!(actual, expected, "{path}");
+    }
+}
+
+#[test]
+fn dependency_facts_distinguish_static_and_dynamic_syntax_without_dynamic_text() {
+    let source = "import './side-effect.js';\nconst fixed = require('./fixed.js');\nrequire(name);\nimport('./literal.js');\nimport(name);\n";
+    let parsed = ParserRegistry::default().parse(Language::JavaScript, "src/a.js", source, 1000);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(parsed.dependencies.len(), 5);
+
+    assert_eq!(
+        parsed.dependencies[0].syntax,
+        repo_core::DependencySyntax::StaticImport
+    );
+    assert_eq!(
+        parsed.dependencies[0].module.as_deref(),
+        Some("./side-effect.js")
+    );
+    assert_eq!(
+        parsed.dependencies[1].syntax,
+        repo_core::DependencySyntax::StaticImport
+    );
+    assert_eq!(parsed.dependencies[1].module.as_deref(), Some("./fixed.js"));
+    for dependency in &parsed.dependencies[2..] {
+        assert_eq!(
+            dependency.syntax,
+            repo_core::DependencySyntax::DynamicImport
+        );
+        assert!(dependency.module.is_none());
     }
 }
 
@@ -282,6 +391,7 @@ fn new_ast_metadata_is_redacted_and_counts_toward_record_budgets() {
     let records = parsed.symbols.len()
         + parsed.calls.len()
         + parsed.imports.len()
+        + parsed.dependencies.len()
         + parsed
             .calls
             .iter()
@@ -342,11 +452,12 @@ fn detects_common_secret_families_and_masks_only_complete_spans() {
     ] {
         assert!(
             matches.iter().any(|m| m.rule_id == rule),
-            "missing {rule}: {matches:?}"
+            "missing expected secret family: {rule}"
         );
     }
     let redacted = redact_secrets(&source);
     assert!(redacted.redacted);
+    assert!(redacted.redaction_complete);
     assert_eq!(source.len(), redacted.content.len());
     for secret in [
         &token,
@@ -372,6 +483,34 @@ fn detects_common_secret_families_and_masks_only_complete_spans() {
             .collect::<Vec<_>>()
     );
     assert!(!redact_secrets(&redacted.content).redacted);
+}
+
+#[test]
+fn redaction_budget_downgrades_parser_and_dataflow_coverage() {
+    let token = fixture_token();
+    let mut source = "def run(value):\n    eval(value)\n".to_owned();
+    for _ in 0..=4096 {
+        source.push_str("# ");
+        source.push_str(&token);
+        source.push('\n');
+    }
+
+    let redacted = redact_secrets(&source);
+    assert!(!redacted.redaction_complete);
+    assert_eq!(redacted.redaction_count, 1);
+    assert!(!redacted.content.contains("eval"));
+
+    let parsed =
+        ParserRegistry::default().parse_extended(Language::Python, "flow.py", &source, 10_000);
+    assert_eq!(parsed.status, CoverageStatus::Partial);
+    assert_eq!(parsed.dataflow_status, CoverageStatus::Partial);
+    assert!(parsed.dataflows.is_empty());
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "redaction_budget")
+    );
 }
 
 #[test]

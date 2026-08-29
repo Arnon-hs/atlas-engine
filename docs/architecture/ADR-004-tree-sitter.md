@@ -18,6 +18,15 @@ Grammar updates require regression tests. Parsing establishes structure, not typ
 resolution, taint flow or exploitability. Native grammar code is a dependency trust
 boundary and is covered by fuzz targets and external process isolation guidance.
 
+### v0.3 amendment
+
+Rust and Bash grammars are available only through the opt-in extended parser;
+legacy index records keep the original four-language AST boundary. The same
+owned model exposes supported syntax counts and one bounded Python
+parameter-to-dynamic-evaluation/shell flow class. Exceeded or unmodeled paths are
+reported as partial coverage, never absence. Trees, identifiers and source text
+remain outside the public flow contract.
+
 ## Alternatives
 
 Regex-only symbol extraction loses nesting and correct ranges. Character-count

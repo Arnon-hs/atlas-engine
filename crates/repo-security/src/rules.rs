@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use repo_core::{
-    CallSite, Diagnostic, ENGINE_VERSION, ImportBinding, Language, ParserRegistry, SCHEMA_VERSION,
-    TrackingState, detect_secrets, redact_secrets,
+    CallSite, CoverageStatus, Diagnostic, ENGINE_VERSION, ImportBinding, Language, ParsedFile,
+    ParserRegistry, SCHEMA_VERSION, TrackingState, detect_secrets, redact_secrets,
 };
 
 use crate::{Confidence, FindingKind, MAX_FINDINGS_PER_FILE, SecurityFinding, Severity};
@@ -49,6 +49,37 @@ pub fn scan_text(
     tracking: TrackingState,
     source: &str,
     max_parse_millis: u64,
+) -> (Vec<SecurityFinding>, Vec<Diagnostic>) {
+    scan_text_inner(
+        relative_path,
+        language,
+        tracking,
+        source,
+        max_parse_millis,
+        None,
+    )
+}
+
+/// Scan with the exact parser result used by the caller's coverage contract.
+/// Keeping findings and coverage on one parse prevents a time-budget race from
+/// publishing a complete zero after a second parser invocation stopped early.
+pub(crate) fn scan_text_with_parsed(
+    relative_path: &str,
+    language: Language,
+    tracking: TrackingState,
+    source: &str,
+    parsed: &ParsedFile,
+) -> (Vec<SecurityFinding>, Vec<Diagnostic>) {
+    scan_text_inner(relative_path, language, tracking, source, 0, Some(parsed))
+}
+
+fn scan_text_inner(
+    relative_path: &str,
+    language: Language,
+    tracking: TrackingState,
+    source: &str,
+    max_parse_millis: u64,
+    supplied_parse: Option<&ParsedFile>,
 ) -> (Vec<SecurityFinding>, Vec<Diagnostic>) {
     if !repo_core::normalize_relative_path(std::path::Path::new(relative_path))
         .is_ok_and(|normalized| normalized == relative_path)
@@ -104,25 +135,38 @@ pub fn scan_text(
         ));
     }
 
-    if language.has_ast() && findings.len() < MAX_FINDINGS_PER_FILE {
-        let parsed =
+    let owned_parse;
+    let parsed = if let Some(parsed) = supplied_parse {
+        Some(parsed)
+    } else if language.has_ast() && findings.len() < MAX_FINDINGS_PER_FILE {
+        owned_parse =
             ParserRegistry::default().parse(language, relative_path, source, max_parse_millis);
-        for diagnostic in parsed.diagnostics {
+        Some(&owned_parse)
+    } else {
+        None
+    };
+    if let Some(parsed) = parsed {
+        for diagnostic in &parsed.diagnostics {
             if diagnostics.len() < 128 {
                 diagnostics.push(Diagnostic {
-                    code: diagnostic.code,
+                    code: diagnostic.code.clone(),
                     relative_path: Some(portable_path.clone()),
-                    message: diagnostic.message,
+                    message: diagnostic.message.clone(),
                 });
             }
         }
+    }
+    if language.has_ast()
+        && findings.len() < MAX_FINDINGS_PER_FILE
+        && let Some(parsed) = parsed
+    {
         let aliases = Aliases::from_imports(&parsed.imports);
-        for call in parsed.calls {
+        for call in &parsed.calls {
             if findings.len() >= MAX_FINDINGS_PER_FILE {
                 limited = true;
                 break;
             }
-            if let Some(rule) = dangerous_call(language, &call, &aliases) {
+            if let Some(rule) = dangerous_call(language, call, &aliases) {
                 findings.push(make_finding(
                     &portable_path,
                     source,
@@ -133,7 +177,7 @@ pub fn scan_text(
             }
         }
     }
-    configuration_findings(
+    let configuration_incomplete = configuration_findings(
         &portable_path,
         language,
         tracking,
@@ -141,6 +185,13 @@ pub fn scan_text(
         &mut findings,
         &mut limited,
     );
+    if configuration_incomplete && diagnostics.len() < 128 {
+        diagnostics.push(Diagnostic {
+            code: "configuration_evaluation_partial".into(),
+            relative_path: Some(portable_path.clone()),
+            message: "Configuration syntax exceeded the bounded native rule subset; exact configuration totals are unavailable.".into(),
+        });
+    }
     findings.sort_by(|left, right| {
         (left.line, left.column, &left.rule_id).cmp(&(right.line, right.column, &right.rule_id))
     });
@@ -287,7 +338,7 @@ fn configuration_findings(
     source: &str,
     findings: &mut Vec<SecurityFinding>,
     limited: &mut bool,
-) {
+) -> bool {
     let filename = path.rsplit('/').next().unwrap_or(path);
     let is_template = filename.ends_with(".example")
         || filename.ends_with(".sample")
@@ -312,15 +363,44 @@ fn configuration_findings(
         };
         push_finding(path, source, 0, &rule, findings, limited);
     }
-    let compose = matches!(
-        filename,
-        "docker-compose.yml" | "docker-compose.yaml" | "compose.yml" | "compose.yaml"
-    ) || filename.starts_with("docker-compose.");
+    let compose = super::surface::compose_file(filename);
     let dockerfile = filename == "Dockerfile" || filename.starts_with("Dockerfile.");
     let workflow = path.starts_with(".github/workflows/") && matches!(language, Language::Yaml);
     let mut yaml_scalar = YamlScalarLines::default();
     let mut offset = 0;
-    for line in source.split_inclusive('\n') {
+    let mut incomplete = false;
+    let compose_inventory =
+        compose.then(|| super::surface::compose_privileged_inventory(path, source));
+    let compose_privileged_lines: BTreeSet<_> = compose_inventory
+        .as_ref()
+        .into_iter()
+        .flat_map(|inventory| &inventory.signals)
+        .filter(|signal| signal.kind == super::surface::ExecutionSignalKind::DockerPrivileged)
+        .map(|signal| signal.line)
+        .collect();
+    if compose_inventory
+        .as_ref()
+        .is_some_and(|inventory| inventory.status != CoverageStatus::Complete)
+    {
+        incomplete = true;
+    }
+    let workflow_inventory = workflow.then(|| super::surface::workflow_inventory(path, source));
+    let workflow_mutable_lines: BTreeSet<_> = workflow_inventory
+        .as_ref()
+        .into_iter()
+        .flat_map(|inventory| &inventory.signals)
+        .filter(|signal| {
+            signal.kind == super::surface::ExecutionSignalKind::GithubWorkflowMutableRef
+        })
+        .map(|signal| signal.line)
+        .collect();
+    if workflow_inventory
+        .as_ref()
+        .is_some_and(|inventory| inventory.status != CoverageStatus::Complete)
+    {
+        incomplete = true;
+    }
+    for (line_index, line) in source.split_inclusive('\n').enumerate() {
         if findings.len() >= MAX_FINDINGS_PER_FILE {
             *limited = true;
             break;
@@ -333,7 +413,10 @@ fn configuration_findings(
             offset += line.len();
             continue;
         }
-        let rule = if compose && PRIVILEGED.is_match(line) {
+        if dockerfile && super::surface::docker_user_line_syntax_unsupported(line) {
+            incomplete = true;
+        }
+        let rule = if compose_privileged_lines.contains(&(line_index + 1)) {
             Some(Rule {
                 id: "config-docker-privileged",
                 severity: Severity::High,
@@ -341,7 +424,7 @@ fn configuration_findings(
                 kind: FindingKind::Configuration,
                 message: "Docker Compose enables privileged mode, weakening container isolation. Review whether it is required.",
             })
-        } else if dockerfile && ROOT_USER.is_match(line) {
+        } else if dockerfile && super::surface::docker_user_line_is_explicit_root(line) {
             Some(Rule {
                 id: "config-docker-root-user",
                 severity: Severity::Low,
@@ -357,7 +440,7 @@ fn configuration_findings(
                 kind: FindingKind::Configuration,
                 message: "A command sets world-writable permissions. Review the target, runtime user and necessity.",
             })
-        } else if workflow && unpinned_action(line) {
+        } else if workflow_mutable_lines.contains(&(line_index + 1)) {
             Some(Rule {
                 id: "config-unpinned-github-action",
                 severity: Severity::Medium,
@@ -397,6 +480,7 @@ fn configuration_findings(
         }
         offset += line.len();
     }
+    incomplete
 }
 
 // Configuration rules inspect mapping lines, not text stored in YAML literal or
@@ -533,11 +617,6 @@ fn yaml_scalar_indicator(text: &str) -> Option<Option<usize>> {
     }
 }
 
-static PRIVILEGED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*privileged\s*:\s*true\s*(?:#.*)?$").expect("constant regex"));
-static ROOT_USER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*USER\s+(?:root|0)(?::[^\s]+)?\s*(?:#.*)?$").expect("constant regex")
-});
 static CHMOD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^\s*|[;&|]\s*|\bRUN\s+)chmod\s+(?:-[A-Za-z]+\s+)*0?777(?:\s|$)")
         .expect("constant regex")
@@ -545,27 +624,6 @@ static CHMOD: LazyLock<Regex> = LazyLock::new(|| {
 static CORS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)(?:['"]Access-Control-Allow-Origin['"]\s*(?:,|:|=>|=)\s*['"]\*['"]|\bCORS_ALLOW_ALL_ORIGINS\s*=\s*True\b|\bCORS_ORIGIN_ALLOW_ALL\s*=\s*True\b)"#).expect("constant regex")
 });
-static ACTION_USES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r##"^\s*(?:-\s*)?uses\s*:\s*['"]?([^\s'"#]+)"##).expect("constant regex")
-});
-
-fn unpinned_action(line: &str) -> bool {
-    let Some(captures) = ACTION_USES.captures(line) else {
-        return false;
-    };
-    let reference = &captures[1];
-    if reference.starts_with("./") {
-        return false;
-    }
-    if reference.starts_with("docker://") {
-        return !reference.rsplit_once("@sha256:").is_some_and(|(_, hash)| {
-            hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
-        });
-    }
-    !reference
-        .rsplit_once('@')
-        .is_some_and(|(_, rev)| rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()))
-}
 
 fn push_finding(
     path: &str,
@@ -850,7 +908,7 @@ mod tests {
 
     #[test]
     fn config_rules_understand_pins_and_do_not_claim_untracked_env_is_committed() {
-        let workflow = "steps:\n  - uses: actions/checkout@v4\n  - uses: actions/checkout@0123456789012345678901234567890123456789\n  - uses: ./local\n  - uses: docker://example/image@sha256:0123456789012345678901234567890123456789012345678901234567890123\n";
+        let workflow = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/checkout@0123456789012345678901234567890123456789\n      - uses: ./local\n      - uses: docker://example/image@sha256:0123456789012345678901234567890123456789012345678901234567890123\n";
         let (findings, _) = scan_text(
             ".github/workflows/ci.yml",
             Language::Yaml,
@@ -876,6 +934,22 @@ mod tests {
             1000,
         );
         assert_eq!(findings[0].rule_id, "config-tracked-env");
+
+        for principal in ["root", "0", "00", "+0", "-0", "000:1000"] {
+            let (findings, _) = scan_text(
+                "Dockerfile",
+                Language::Unknown,
+                TrackingState::Unknown,
+                &format!("FROM scratch\nUSER {principal}\n"),
+                1000,
+            );
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.rule_id == "config-docker-root-user"),
+                "{principal}"
+            );
+        }
     }
 
     #[test]
@@ -891,7 +965,15 @@ mod tests {
                 &source,
                 1000,
             );
-            assert!(diagnostics.is_empty(), "{indicator}");
+            if indicator.starts_with('&') {
+                assert!(
+                    diagnostics.iter().any(|diagnostic| {
+                        diagnostic.code == "configuration_evaluation_partial"
+                    })
+                );
+            } else {
+                assert!(diagnostics.is_empty(), "{indicator}");
+            }
             assert_eq!(findings.len(), 1, "{indicator}");
             assert_eq!(findings[0].rule_id, "config-docker-privileged");
             assert_eq!(findings[0].line, 7);
@@ -928,6 +1010,73 @@ mod tests {
             assert_eq!(findings[0].rule_id, "config-docker-privileged");
             assert_eq!(findings[0].line, expected_line);
         }
+    }
+
+    #[test]
+    fn compose_and_workflow_configuration_use_structural_paths() {
+        for source in [
+            "x-unused:\n  privileged: true\nservices:\n  app:\n    image: busybox\n",
+            r#"{"x-unused":{"privileged":true},"services":{"app":{"image":"busybox"}}}"#,
+        ] {
+            let (findings, diagnostics) = scan_text(
+                "compose.override.yaml",
+                Language::Yaml,
+                TrackingState::Unknown,
+                source,
+                1000,
+            );
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(
+                findings
+                    .iter()
+                    .all(|finding| finding.rule_id != "config-docker-privileged")
+            );
+        }
+        let (findings, diagnostics) = scan_text(
+            "compose.prod.yaml",
+            Language::Yaml,
+            TrackingState::Unknown,
+            "services:\n  app:\n    privileged: true\n",
+            1000,
+        );
+        assert!(diagnostics.is_empty());
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.rule_id == "config-docker-privileged")
+        );
+
+        for source in [
+            "on: push\nenv:\n  uses: owner/action@main\n  permissions: write-all\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n",
+            r#"{"on":"push","env":{"uses":"owner/action@main","permissions":"write-all"},"jobs":{"test":{"runs-on":"ubuntu-latest","steps":[{"run":"echo ok"}]}}}"#,
+        ] {
+            let (findings, diagnostics) = scan_text(
+                ".github/workflows/env.yml",
+                Language::Yaml,
+                TrackingState::Unknown,
+                source,
+                1000,
+            );
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(
+                findings
+                    .iter()
+                    .all(|finding| finding.rule_id != "config-unpinned-github-action")
+            );
+        }
+        let (findings, diagnostics) = scan_text(
+            ".github/workflows/flow.yml",
+            Language::Yaml,
+            TrackingState::Unknown,
+            r#"{"on":"push","jobs":{"test":{"steps":[{"uses":"owner/action@main"}]}}}"#,
+            1000,
+        );
+        assert!(diagnostics.is_empty());
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.rule_id == "config-unpinned-github-action")
+        );
     }
 
     #[test]

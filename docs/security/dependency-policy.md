@@ -53,13 +53,13 @@ copyleft, patent-sensitive, multi-jurisdiction and ambiguous ownership matters
 go to qualified review. Never "fix" a dependency license by changing its text or
 substituting the project's license.
 
-### Exact duplicate exception
+### Reviewed duplicate explanations
 
 The four supported release target triples are the `deny.toml` graph scope;
 Windows-only duplicates are outside those builds, not silently ignored for a
 claimed Windows release. Reassess the graph before adding a platform.
 
-`io-lifetimes@2.0.4` is the one reviewed duplicate exception: `fs-set-times@0.20.3`
+`io-lifetimes@2.0.4` is a reviewed duplicate exception: `fs-set-times@0.20.3`
 requires major 2, while `cap-primitives`, `cap-std`, and `cap-fs-ext@4.0.3` use
 `io-lifetimes@3.0.1`. Evidence: `cargo tree --locked -i io-lifetimes@2.0.4` and
 `cargo tree --locked -i io-lifetimes@3.0.1`. Incompatible upstream major APIs cannot
@@ -67,6 +67,13 @@ be unified safely by a lockfile edit. Only that exact older version is skipped
 for duplicate detection; advisories/licenses/source checks still apply. Review
 on every capability-family update and remove when upstream converges. No
 `skip-tree`, whole-package advisory exception, or global duplicate suppression.
+
+`cpufeatures@0.2.17` enters through `sha2@0.10.9`, while
+`cpufeatures@0.3.1` enters through `blake3@1.8.7`. Their stable upstream major
+requirements cannot be unified by a lockfile edit. Both versions retain
+compatible permissive terms. Keep the duplicate visible as a `cargo deny`
+warning rather than adding a skip; review it on either parent update and remove
+this explanation when the graphs converge.
 
 ### Fuzz-only license exception
 
@@ -97,7 +104,8 @@ Investigate unmaintained/yanked warnings before release. Dependabot opens weekly
 Cargo (workspace and fuzz) and GitHub Action updates; maintainers review changes
 and updated immutable action pins.
 
-SAST is CodeQL Rust plus Actions. `scripts/check_sast.py` blocks unsuppressed
+SAST is CodeQL Rust plus Actions; offline zizmor is a workflow-specific companion
+and does not replace the hosted CodeQL result gate. `scripts/check_sast.py` blocks unsuppressed
 results with `security-severity >= 7.0` (high/critical) or error-level results
 without a positive numeric score, including the rule's default level. The gate
 rejects missing/empty runs, missing actual results arrays, malformed critical

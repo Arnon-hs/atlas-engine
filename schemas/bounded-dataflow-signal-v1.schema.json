@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/bounded-dataflow-signal-v1.schema.json",
+  "title": "Atlas Engine bounded intraprocedural dataflow signal v1",
+  "description": "A redacted Python parameter-to-sink fact. It is not proof of exploitability and contains no identifier or source text.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "relative_path",
+    "source_range",
+    "sink_range",
+    "assignment_hops"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "python_parameter_to_dynamic_evaluation",
+        "python_parameter_to_shell_execution"
+      ]
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+(?:/[^/\\\\\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]+)*$"
+    },
+    "source_range": { "$ref": "#/$defs/range" },
+    "sink_range": { "$ref": "#/$defs/range" },
+    "assignment_hops": { "type": "integer", "minimum": 0, "maximum": 8 }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "range": {
+      "type": "object",
+      "required": [
+        "start_line",
+        "end_line",
+        "start_byte",
+        "end_byte",
+        "start_column",
+        "end_column"
+      ],
+      "properties": {
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 0 },
+        "start_column": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

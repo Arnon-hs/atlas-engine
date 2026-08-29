@@ -1,0 +1,3 @@
+FROM scratch
+ENTRYPOINT ["FIXTURE_ONLY_DO_NOT_EXECUTE"]
+CMD ["fixture"]

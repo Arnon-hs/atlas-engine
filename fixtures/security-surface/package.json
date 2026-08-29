@@ -1,0 +1,7 @@
+{
+  "name": "atlas-engine-surface-fixture",
+  "private": true,
+  "scripts": {
+    "postinstall": "FIXTURE_ONLY_DO_NOT_EXECUTE"
+  }
+}

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use repo_core::{Repository, ScanOptions, content_hash};
-use repo_indexer::{IndexOptions, index_to_writer};
+use repo_indexer::{IndexOptions, index_to_writer, snapshot_to_writer};
 
 fn ten_thousand_files() -> tempfile::TempDir {
     let temp = tempfile::tempdir().unwrap();
@@ -96,6 +96,19 @@ fn engine_benches(criterion: &mut Criterion) {
     hash.finish();
 
     let fixture = representative_tree();
+    let snapshot_repository = Repository::open(
+        fixture.path(),
+        ScanOptions {
+            repository_id: Some("benchmark/fixture".into()),
+            ..options.clone()
+        },
+    )
+    .unwrap();
+    let snapshot_options = IndexOptions::default();
+    let base = snapshot_to_writer(&snapshot_repository, &snapshot_options, None, io::sink())
+        .unwrap()
+        .manifest
+        .expect("synthetic benchmark fixture must produce a complete snapshot");
     let repository = Repository::open(fixture.path(), options).unwrap();
     let mut scan = criterion.benchmark_group("representative_tree");
     scan.throughput(Throughput::Elements(repository.files.len() as u64));
@@ -112,6 +125,32 @@ fn engine_benches(criterion: &mut Criterion) {
     });
     scan.bench_function("security_scan", |benchmark| {
         benchmark.iter(|| black_box(repo_security::scan(black_box(&repository)).unwrap()));
+    });
+    scan.bench_function("snapshot_full_sink", |benchmark| {
+        benchmark.iter(|| {
+            let result = snapshot_to_writer(
+                black_box(&snapshot_repository),
+                &snapshot_options,
+                None,
+                io::sink(),
+            )
+            .unwrap();
+            assert!(result.complete);
+            black_box(result)
+        });
+    });
+    scan.bench_function("snapshot_noop_delta_sink", |benchmark| {
+        benchmark.iter(|| {
+            let result = snapshot_to_writer(
+                black_box(&snapshot_repository),
+                &snapshot_options,
+                Some(&base),
+                io::sink(),
+            )
+            .unwrap();
+            assert!(result.complete && result.upserts == 0 && result.deletes == 0);
+            black_box(result)
+        });
     });
     scan.finish();
 }

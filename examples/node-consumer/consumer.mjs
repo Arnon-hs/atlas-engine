@@ -93,7 +93,7 @@ async function verifyExistingSnapshot(destination, manifest) {
  */
 export async function consumeIndex({
   enginePath, repositoryPath, repositoryId, outputDirectory,
-  commitSha = null, engineVersion = '0.1.0', signal, ...limits
+  commitSha = null, engineVersion = '0.3.0', signal, ...limits
 }) {
   const options = { ...DEFAULTS, ...limits };
   if (Object.keys(limits).some(key => !Object.hasOwn(DEFAULTS, key))

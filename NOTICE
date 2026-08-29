@@ -4,10 +4,11 @@ https://github.com/Arnon-hs/atlas-engine
 Project code is offered under MIT OR Apache-2.0. Contributors retain rights in
 their contributions; this notice does not assign ownership to a company or person.
 
-Tree-sitter and its PHP, JavaScript, TypeScript and Python grammars are third-party
-components. Their upstream notices, and other dependency license and notice files,
-are collected from the exact Cargo dependency sources into binary release archives.
-See docs/security/dependency-policy.md for inventory scope and review obligations.
+Tree-sitter and its PHP, JavaScript, TypeScript, Python, Rust and Bash grammars are
+third-party components. Their upstream notices, and other dependency license and
+notice files, are collected from the exact Cargo dependency sources into binary
+release archives. See docs/security/dependency-policy.md for inventory scope and
+review obligations.
 
 The vendored SARIF 2.1.0 schema is OASIS Standard material incorporating Approved
 Errata 01 (28 August 2023). Copyright OASIS Open 2023. All Rights Reserved.
