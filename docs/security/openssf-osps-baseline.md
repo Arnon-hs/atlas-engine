@@ -36,7 +36,7 @@ controls are included as targets, without asserting maturity.
 | OSPS-BR-02.02 | PLANNED | Version/target artifact naming prepared; requires actual release assets |
 | OSPS-BR-03.01 | MET | Project/reporter/support URLs use HTTPS in [README](../../README.md), [SECURITY](../../SECURITY.md) and [SUPPORT](../../SUPPORT.md) |
 | OSPS-BR-03.02 | PLANNED | Planned GitHub HTTPS distribution plus attestation verification; no published distribution validated |
-| OSPS-BR-04.01 | PLANNED | [Unreleased changelog](../../CHANGELOG.md) exists; a dated functional/security release log must accompany publication |
+| OSPS-BR-04.01 | MET | [Changelog](../../CHANGELOG.md) contains a dated functional/security entry for 0.4.1 and distinguishes unpublished source baselines |
 | OSPS-BR-05.01 | MET | [Locked Cargo build](../../.github/workflows/ci.yml), standard Cargo advisory tools, and [verified source installer](../../scripts/install_cyclonedx.py) ingest dependencies through standard tooling |
 | OSPS-BR-06.01 | PLANNED | Checksums and keyless attestations configured, but no signed published artifact set verified |
 | OSPS-BR-07.01 | PLANNED | Synthetic fixtures and ignore rules exist; hosted secret scanning/push protection and full initial history/rights review still required |
@@ -50,8 +50,8 @@ controls are included as targets, without asserting maturity.
 | OSPS-DO-02.01 | PLANNED | [Support guide](../../SUPPORT.md) and issue forms prepared; verify published release reporting route |
 | OSPS-DO-03.01 | PLANNED | [Integrity/authenticity instructions](../releases.md#consumer-verification) need a real release verification |
 | OSPS-DO-03.02 | PLANNED | Workflow/signer verification documented; expected identity must be verified against real attestations |
-| OSPS-DO-04.01 | PLANNED | [Support policy](../../SECURITY.md#supported-versions) explicitly has no current released support window; owner must set it |
-| OSPS-DO-05.01 | PLANNED | End-of-support policy drafted; publish actual support dates/version notices |
+| OSPS-DO-04.01 | MET | [Support policy](../../SECURITY.md#supported-versions) identifies the latest 0.4.x patch as supported through 2027-02-28 |
+| OSPS-DO-05.01 | MET | [Support policy](../../SECURITY.md#supported-versions) gives an explicit end date and states that older source baselines receive no promised backports |
 | OSPS-DO-06.01 | PLANNED | [Dependency guide](dependency-policy.md) exists; include verified release inventory and distribution scope |
 | OSPS-DO-07.01 | MET | [CONTRIBUTING](../../CONTRIBUTING.md#development-setup) documents Rust/native tools, build/test commands and dependency checks; [toolchain](../../rust-toolchain.toml) pins compiler |
 

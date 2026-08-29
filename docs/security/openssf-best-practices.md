@@ -9,7 +9,7 @@ not this checklist alone. The OSPS Baseline is a separate assessment.
 | --- | --- | --- |
 | Basics and scope | README, dual license, support/contribution/conduct policies | Published source, verified private contacts, ownership rights, usable public discussion |
 | Change control | Git remote, SemVer policy, changelog, PR template | Real commit history, reviews, protected branch and required checks |
-| Reporting | Security policy, non-sensitive issue forms, response targets | Enabled private vulnerability reporting, monitored responder and response records |
+| Reporting | Security policy, non-sensitive issue forms, response targets, enabled private vulnerability reporting | External-view reporting test, backup contact, monitored responder and response records |
 | Quality | Unit/integration/property tests, schema/SARIF validation, Linux/macOS CI | Recorded hosted passes, newcomer setup validation, coverage assessment and regressions |
 | Security | Threat model, no own unsafe policy, Rust CodeQL, dependency gates | Findings disposition, independent review, sustained fuzzing, verified settings |
 | Cryptography and delivery | Standard BLAKE3/SHA-256 use; no custom signing scheme; keyless attestation preparation | Published artifacts/SBOM/notices and identity/provenance verification |
@@ -31,7 +31,7 @@ score, published result or badge until a real run is inspected.
 | Fuzzing | Five local cargo-fuzz targets and seeds; no OSS-Fuzz enrollment or long campaign claimed |
 | Pinned-Dependencies | Immutable Action pins, Cargo locks, separately audited SBOM tool source/lock |
 | SAST | Verified CodeQL Rust support; read-only analysis and separate trusted upload |
-| Security-Policy | Policy is present; actual private reporting channel still requires activation |
+| Security-Policy | Policy is present and private reporting activation was API-verified; external-view and response evidence remain |
 | Signed-Releases | Keyless hosted attestation preparation; no signed published release yet |
 | Token-Permissions | Read defaults and explicit limited privileged jobs; verify repository setting |
 | Vulnerabilities | cargo-deny/audit plus toolchain lock checks; current evidence must be renewed |

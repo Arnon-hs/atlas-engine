@@ -7,9 +7,10 @@ Offline, read-only repository analysis, structural indexing, and static security
 signals, implemented in Rust. Use it to understand a source tree or produce
 redacted records for search without running anything from that tree.
 
-**Status:** v0.4.0 source implementation; not a claim of a published release,
-completed third-party security audit, OpenSSF badge, or SLSA level. Hosted CI,
-repository settings and signed release evidence must be verified by maintainers.
+**Status:** source version v0.4.1. The immutable v0.4.0 source tag did not produce
+a GitHub Release. Published status, assets and attestations must be verified on
+GitHub. This is not a claim of a completed third-party security audit, OpenSSF
+badge, or SLSA level.
 
 ## What it does
 
@@ -183,7 +184,7 @@ a finding threshold.
 | Other UTF-8 text | File-level fallback where eligible |
 | Binary/invalid UTF-8 | No source parsing; diagnostic/skip behavior |
 
-Legacy records retain `schema_version: "1.0"`; engine identity is `0.4.0`.
+Legacy records retain `schema_version: "1.0"`; engine identity is `0.4.1`.
 Opt-in index events and snapshot manifests use schema `2.0`; their upsert payloads
 remain v1 chunk records. `version --format json` reports legacy, snapshot and
 independent contract versions.

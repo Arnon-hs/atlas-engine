@@ -1,9 +1,11 @@
 # Release, SBOM and provenance
 
-Status: prepared workflow and tooling, no published artifacts, successful hosted
-release run, badge or SLSA level claimed. Current source version: `0.4.0`;
-it and the prior v0.1, v0.2 and v0.3 source baselines are not claimed as
-published binary releases.
+Status: release workflow and tooling are prepared. Current source version:
+`0.4.1`. Publication, hosted-run success, assets, badges and attestations are
+claims only when verified against GitHub's release and Actions records.
+The immutable `v0.4.0` source tag exists, but hosted release validation exposed
+a platform-scheduling race and no GitHub Release was created. The prior v0.1,
+v0.2 and v0.3 source baselines are also not claimed as published binary releases.
 Publication requires explicit owner authorization and verified GitHub settings.
 
 ## Before tagging
@@ -97,7 +99,7 @@ Checksums alone detect corruption, not a substituted release. Verify the hosted
 identity and subject digest with GitHub CLI:
 
 ```bash
-gh attestation verify atlas-engine-v0.4.0-aarch64-apple-darwin.tar.gz \
+gh attestation verify atlas-engine-v0.4.1-aarch64-apple-darwin.tar.gz \
   --repo Arnon-hs/atlas-engine \
   --signer-workflow Arnon-hs/atlas-engine/.github/workflows/release.yml \
   --deny-self-hosted-runners

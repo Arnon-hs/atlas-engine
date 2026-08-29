@@ -34,7 +34,7 @@ tempfile.workspace = true
 [dev-dependencies]
 jsonschema.workspace = true
 blake3.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["pipe"] }
 
 [lints]
 workspace = true

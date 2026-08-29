@@ -13,13 +13,16 @@ owner actually applies each setting. Public visibility was checked for
 - [ ] Inventory collaborators, roles, deploy keys, Apps, webhooks and tokens;
   manually assign least privilege and revoke unused access. Record the roster in
   `MAINTAINERS.md` and appoint a backup administrator/security responder.
-- [ ] Enable GitHub Private Vulnerability Reporting and verify the report form
-  works from an external reporter's view. Publish a verified backup private
-  contact. Do not claim activation based on the SECURITY.md link alone.
-- [ ] Enable dependency graph and Dependabot vulnerability alerts; review security
-  update settings. Weekly version updates are configured in `.github/dependabot.yml`.
-- [ ] Enable secret scanning and push protection where available. Verify allowed
-  synthetic-fixture handling without disabling scanning for real credentials.
+- [x] Enable GitHub Private Vulnerability Reporting. Activation was verified
+  through GitHub's API on 2026-08-29. External-view testing and a backup private
+  contact remain pending; do not infer them from the SECURITY.md link.
+- [x] Enable the dependency graph, vulnerability alerts and Dependabot security
+  updates. The dependency-graph SBOM endpoint and security-update status were
+  API-verified on 2026-08-29; weekly version updates remain source-configured in
+  `.github/dependabot.yml`.
+- [x] Enable secret scanning and push protection where available. GitHub's API
+  reported both enabled on 2026-08-29; synthetic-fixture handling must not
+  disable scanning for real credentials.
 - [ ] Appoint confidential conduct and independent appeals contacts.
 
 ## Primary branch rules
