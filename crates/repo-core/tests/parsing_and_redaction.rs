@@ -500,16 +500,24 @@ fn redaction_budget_downgrades_parser_and_dataflow_coverage() {
     assert_eq!(redacted.redaction_count, 1);
     assert!(!redacted.content.contains("eval"));
 
-    let parsed =
-        ParserRegistry::default().parse_extended(Language::Python, "flow.py", &source, 10_000);
+    let parsed = ParserRegistry::default().parse_extended(Language::Python, "flow.py", &source, 1);
     assert_eq!(parsed.status, CoverageStatus::Partial);
     assert_eq!(parsed.dataflow_status, CoverageStatus::Partial);
+    assert!(parsed.symbols.is_empty());
+    assert!(parsed.calls.is_empty());
+    assert!(parsed.structural_metrics.is_none());
     assert!(parsed.dataflows.is_empty());
     assert!(
         parsed
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "redaction_budget")
+    );
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "parse_budget")
     );
 }
 

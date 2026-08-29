@@ -122,6 +122,16 @@ impl ParserRegistry {
         }
         let started = Instant::now();
         let budget = Duration::from_millis(max_parse_millis.min(10_000));
+        // Exhausted redaction masks the whole file. Stop before Tree-sitter so
+        // parser timing cannot hide that semantic coverage is unavailable.
+        let redacted = redact_secrets(source);
+        if !redacted.redaction_complete {
+            result.diagnostics.push(diagnostic(
+                "redaction_budget",
+                "Secret redaction reached its bounded scan limit; extracted semantics are partial",
+            ));
+            return result;
+        }
         let mut progress = |_: &tree_sitter::ParseState| {
             if started.elapsed() >= budget {
                 ControlFlow::Break(())
@@ -152,13 +162,6 @@ impl ParserRegistry {
         }
         // Parse original syntax; use the identical byte coordinates from a masked
         // copy for every metadata name. Redaction does not alter the AST itself.
-        let redacted = redact_secrets(source);
-        if !redacted.redaction_complete {
-            result.diagnostics.push(diagnostic(
-                "redaction_budget",
-                "Secret redaction reached its bounded scan limit; extracted semantics are partial",
-            ));
-        }
         let mut cursor = tree.walk();
         let mut scopes: Vec<(usize, SymbolKind, String)> = Vec::new();
         let mut nodes = 0;
