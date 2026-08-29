@@ -29,9 +29,9 @@ audit, OpenSSF badge, or SLSA level.
 
 Atlas Engine does not clone repositories, install packages, build scanned code,
 generate embeddings, call an LLM, provide an HTTP service, or own a database or
-queue. It is independent of AtlasRepo; Scout is one possible subprocess consumer.
-Its one bounded Python flow model is not a full taint analyzer or a substitute
-for a specialist SAST tool.
+queue. Downstream systems integrate through versioned subprocess contracts and
+retain ownership of orchestration and publication. Its one bounded Python flow
+model is not a full taint analyzer or a substitute for a specialist SAST tool.
 
 ## Architecture
 
@@ -45,8 +45,7 @@ flowchart TD
     I --> CLI
     S --> CLI
     CLI --> J[Versioned JSON / JSONL / SARIF]
-    J --> Scout[AtlasRepo Scout]
-    J --> Other[Other consumers]
+    J --> Consumer[Downstream consumers]
 ```
 
 | Directory | Package | Responsibility |
@@ -210,8 +209,7 @@ compatibility](docs/contracts/versioning.md).
 - [Diagnostic event JSON Schema](schemas/diagnostic-event-v1.schema.json)
 - [Diagnostic events and output receipts](docs/contracts/diagnostic-events-v1.md)
 - [Doctor JSON Schema](schemas/doctor-v1.schema.json)
-- [AtlasRepo Scout subprocess integration](docs/integrations/atlasrepo-scout.md)
-- [AtlasRepo Scout v0.3 implementation prompt](docs/integrations/atlasrepo-scout-v0.3-prompt.md)
+- [Subprocess consumer integration](docs/integrations/subprocess-consumers.md)
 - [Dependency-free Node.js consumer](examples/node-consumer/README.md)
 
 ## Security boundary and limits

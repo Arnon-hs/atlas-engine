@@ -276,7 +276,7 @@ path with an independently acquired repository; never build/install that input.
 The fixture deliberately has fake secrets, risky APIs and malformed source, so
 findings and incomplete strict security gates are expected there.
 
-## 14. Scout integration
+## 14. Consumer integration
 
 Use the standalone binary with argument arrays and no shell, outside an isolated
 read-only checkout. Pass repository identity and independently acquired commit;
@@ -286,12 +286,12 @@ and exit 0, validate schemas/provenance, then atomically accept only a complete
 snapshot allowed by consumer policy. Never infer deletion from a skipped file.
 
 The [generic Node example](../examples/node-consumer/README.md) contains no private
-AtlasRepo code or external packages. It demonstrates bounded decoding,
+downstream-system code or external packages. It demonstrates bounded decoding,
 cancellation, cleanup, staged publication and idempotency; it does not perform
 embedding, database writes or active-index switching. Empty streams require
 independent provenance and are rejected by this minimal example.
 
-See the [Scout integration guide](integrations/atlasrepo-scout.md).
+See the [subprocess integration guide](integrations/subprocess-consumers.md).
 
 ## 15. Work remaining for 0.2.0
 

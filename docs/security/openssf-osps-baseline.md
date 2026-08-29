@@ -85,7 +85,7 @@ controls are included as targets, without asserting maturity.
 | OSPS-QA-02.01 | MET | [Workspace Cargo manifest](../../Cargo.toml), member manifests, and lockfile enumerate language dependencies; separate [SBOM tool lock](../../tools/cargo-cyclonedx/Cargo.lock) is explicit |
 | OSPS-QA-02.02 | PLANNED | Target-specific CycloneDX generation is prepared; no released compiled asset with verified SBOM yet |
 | OSPS-QA-03.01 | PLANNED | Required-check enforcement and first hosted passes are not established |
-| OSPS-QA-04.01 | NOT_APPLICABLE | This project has one source repository. AtlasRepo is an independent consumer, not a subproject |
+| OSPS-QA-04.01 | NOT_APPLICABLE | This project has one source repository; downstream consumers are not subprojects |
 | OSPS-QA-04.02 | NOT_APPLICABLE | No multi-repository release; assess again if that boundary changes |
 | OSPS-QA-05.01 | PLANNED | Build output is ignored and no release binaries intentionally added; review the initial committed tree before claiming VCS enforcement |
 | OSPS-QA-05.02 | PLANNED | Intentional bounded binary test fixtures need explicit initial review; do not infer an artifact-free history from ignore rules |
@@ -99,7 +99,7 @@ controls are included as targets, without asserting maturity.
 | Requirement | Status | Evidence or remaining work |
 | --- | --- | --- |
 | OSPS-SA-01.01 | PLANNED | [ADRs](../architecture/ADR-001-rust-workspace.md) and [threat model](threat-model.md) exist; tie reviewed design to the released source revision |
-| OSPS-SA-02.01 | PLANNED | [CLI](../contracts/cli.md), [schemas](../contracts/versioning.md) and [subprocess interface](../integrations/atlasrepo-scout.md) require final release verification |
+| OSPS-SA-02.01 | PLANNED | [CLI](../contracts/cli.md), [schemas](../contracts/versioning.md) and [subprocess interface](../integrations/subprocess-consumers.md) require final release verification |
 | OSPS-SA-03.01 | PLANNED | Initial design assessment/tests are present; a recorded pre-release security assessment and findings disposition remain |
 | OSPS-SA-03.02 | PLANNED | [Threat/attack-surface model](threat-model.md) is an initial local assessment; review critical paths and record acceptance before release |
 

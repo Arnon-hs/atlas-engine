@@ -7,7 +7,7 @@ accepted base. The implementation is local commit
 `9d8c2a9e538dc57b9a5f00b9d3fdf9b71decaad5`. This report was written after that
 implementation commit. The v0.2 commit has not been pushed, tagged or released;
 hosted CI and CodeQL have therefore not evaluated it. No crates.io publication,
-OpenSSF certification, SLSA level or production AtlasRepo adoption is claimed.
+OpenSSF certification, SLSA level or production consumer adoption is claimed.
 
 ## 1. Architecture summary
 
@@ -219,7 +219,7 @@ atlas-engine index /snapshots/target --repo-id owner/name --format events-jsonl 
   --since /state/accepted-base.manifest.json
 ```
 
-## 14. AtlasRepo Scout integration
+## 14. Consumer subprocess integration
 
 Use only a separately built, pinned, reviewed engine binary outside the hostile
 snapshot. Start in disabled/offline shadow mode. Supply an immutable read-only
@@ -231,7 +231,7 @@ commit provenance, verify the resulting inventory, then compare-and-swap only if
 the accepted base is still active. Any failure discards staging.
 
 Do not add database, queue, embedding, publication or retry side effects to the
-engine. The repository's [Scout integration guide](integrations/atlasrepo-scout.md)
+engine. The repository's [subprocess integration guide](integrations/subprocess-consumers.md)
 contains the generic boundary. A consumer-specific implementation still needs
 its own review, tests and deployment authorization.
 
@@ -239,7 +239,7 @@ its own review, tests and deployment authorization.
 
 The planned complete-manifest/delta-delivery source scope is implemented and
 locally verified. Publication still requires an authorized push, hosted CI/CodeQL,
-review, exact-SHA evidence and an explicit release decision. AtlasRepo production
+review, exact-SHA evidence and an explicit release decision. Production consumer
 acceptance requires a separately reviewed adapter, durable compare-and-swap tests,
 natural runtime evidence and its own deployment approval.
 

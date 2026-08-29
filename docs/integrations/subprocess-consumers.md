@@ -1,26 +1,25 @@
-# AtlasRepo Scout integration
+# Subprocess consumer integration
 
-This is a public subprocess contract, with no dependency on Scout's implementation,
-credentials, database schema, or private API. The same pattern works for other
-consumers. No Redis, BullMQ, PostgreSQL client, embedding provider, or LLM belongs
-inside Atlas Engine.
+This public subprocess contract has no dependency on a consumer's implementation,
+credentials, database schema, or private API. No Redis, BullMQ, PostgreSQL client,
+embedding provider, or LLM belongs inside Atlas Engine.
 
 ```mermaid
 sequenceDiagram
-    participant S as Scout or other caller
+    participant C as Consumer
     participant W as Isolated read-only checkout
     participant E as atlas-engine
     participant D as Caller-owned storage
-    S->>W: Acquire verified commit; set CPU/memory/time limits
-    S->>E: security PATH --format json --fail-on high
-    E-->>S: Coverage, signals, findings; bounded stderr separately
-    S->>E: analyze PATH --format json --advanced
-    E-->>S: Summary, typed graph/test/metric evidence
-    S->>E: index PATH --format jsonl --repo-id owner/name
-    E-->>S: Redacted chunk records
-    S->>S: Validate, wait for exit 0, review completeness
-    S->>D: Atomically commit staged snapshot
-    Note over S,D: Embeddings, moderation, retries and publication remain caller-owned
+    C->>W: Acquire verified commit; set CPU/memory/time limits
+    C->>E: security PATH --format json --fail-on high
+    E-->>C: Coverage, signals, findings; bounded stderr separately
+    C->>E: analyze PATH --format json --advanced
+    E-->>C: Summary, typed graph/test/metric evidence
+    C->>E: index PATH --format jsonl --repo-id owner/name
+    E-->>C: Redacted chunk records
+    C->>C: Validate, wait for exit 0, review completeness
+    C->>D: Atomically commit staged snapshot
+    Note over C,D: Embeddings, moderation, retries and publication remain caller-owned
 ```
 
 ## Exact invocation
@@ -85,10 +84,10 @@ legacy schema 1 index stream, including on engine 0.2, has no such footer.
 
 Indexing always redacts recognized high-confidence patterns; there is no consumer
 flag that disables it. Redaction does not guarantee that all credentials, private
-source, personal information or licensed content is safe to embed/publish. Scout
-must make that separate decision. Security findings distinguish risky primitives
-from confirmed vulnerabilities; do not auto-label a project vulnerable based only
-on the presence of `eval` or another API.
+source, personal information or licensed content is safe to embed/publish. The
+consumer must make that separate decision. Security findings distinguish risky
+primitives from confirmed vulnerabilities; do not auto-label a project vulnerable
+based only on the presence of `eval` or another API.
 
 ## Generic Node.js example
 
@@ -97,7 +96,7 @@ standard library: no npm install, shell execution, database or LLM. It validates
 critical fields and provenance, applies byte/count/deadline bounds, kills on
 errors, stages output and commits after success. It is deliberately conservative
 about hostile paths and empty streams, and is not a full JSON Schema validator or
-an OS isolation layer. A production Scout adapter must add those layers.
+an OS isolation layer. A production adapter must add those layers.
 
 Retry scheduling, acquisition, quota handling, embeddings, persistence, moderation
 and publication are caller responsibilities. Do not wrap a failed engine scan in
@@ -135,11 +134,11 @@ the same repository, target commit and configuration:
   --accepted-snapshot /state/accepted-snapshot-v2.json
 ```
 
-Scout may run reviewed external tools in a separate sandbox. Atlas Engine never
-starts those tools, downloads their databases, or trusts rules from the scanned
-repository. After the runner has created a strict metadata manifest and stored
-the raw artifact privately, validate the binding and stream-verify every declared
-present artifact digest:
+Consumers may run reviewed external tools in a separate sandbox. Atlas Engine
+never starts those tools, downloads their databases, or trusts rules from the
+scanned repository. After the runner has created a strict metadata manifest and
+stored the raw artifact privately, validate the binding and stream-verify every
+declared present artifact digest:
 
 ```bash
 /usr/local/bin/atlas-engine evidence /state/zizmor-evidence-v1.json \
@@ -154,12 +153,10 @@ snippet, secret, raw finding, command, environment or absolute path. A
 `complete` external run may report zero; `incomplete` and `failed` runs carry
 null result finding totals and fail the consumer's security acceptance policy.
 Their scope selected/evaluated values can remain lower-bound stage observations.
-Keep sandbox
-logs, signatures/attestations and the private result as caller evidence; a valid
-manifest ID proves consistency, not producer authenticity.
+Keep sandbox logs, signatures/attestations and the private result as caller
+evidence; a valid manifest ID proves consistency, not producer authenticity.
 
-Start Scout adoption in shadow mode with deterministic fixtures, different
-thread counts, malformed input, exhausted budgets and external-tool failures.
-Remote acquisition, scheduling, retries, embeddings, databases, moderation and
-publication remain Scout responsibilities. A ready-to-use implementation brief
-is in [the Scout v0.3 prompt](atlasrepo-scout-v0.3-prompt.md).
+Start adoption in shadow mode with deterministic fixtures, different thread
+counts, malformed input, exhausted budgets and external-tool failures. Remote
+acquisition, scheduling, retries, embeddings, databases, moderation and
+publication remain consumer responsibilities.
