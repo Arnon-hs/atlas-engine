@@ -10,10 +10,10 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-repo-core = { package = "atlas-repo-core", version = "0.4.0", path = "../crates/repo-core" }
-repo-analyzer = { package = "atlas-repo-analyzer", version = "0.4.0", path = "../crates/repo-analyzer" }
-repo-indexer = { package = "atlas-repo-indexer", version = "0.4.0", path = "../crates/repo-indexer" }
-repo-security = { package = "atlas-repo-security", version = "0.4.0", path = "../crates/repo-security" }
+repo-core = { package = "atlas-repo-core", version = "0.4.1", path = "../crates/repo-core" }
+repo-analyzer = { package = "atlas-repo-analyzer", version = "0.4.1", path = "../crates/repo-analyzer" }
+repo-indexer = { package = "atlas-repo-indexer", version = "0.4.1", path = "../crates/repo-indexer" }
+repo-security = { package = "atlas-repo-security", version = "0.4.1", path = "../crates/repo-security" }
 
 [workspace]
 members = ["."]

@@ -3,7 +3,16 @@
 Changes use [Semantic Versioning](https://semver.org/). JSON schema major versions
 are independent and follow [contract policy](docs/contracts/versioning.md).
 
-## Unreleased — 0.4.0
+## 0.4.1 — 2026-08-29
+
+- Make the closed-diagnostics-pipe contract deterministic by closing the read
+  end before the child process starts. This removes a platform-scheduling race
+  in release validation without changing runtime behavior.
+- Produce native archives for x86-64 and ARM64 Linux and macOS with checksums,
+  CycloneDX SBOMs, dependency notices and release metadata that binds the exact
+  source revision; hosted publication and attestations remain externally verified.
+
+## 0.4.0 source tag — no published release
 
 - Add a bounded operational CLI contract with machine-readable stderr events,
   terminal run status, SHA-256 primary-output receipts, a global output byte
@@ -68,7 +77,7 @@ are independent and follow [contract policy](docs/contracts/versioning.md).
 - OSS policy files, dependency checks, Linux/macOS CI, CodeQL, Scorecard, and
   four-target release/SBOM/attestation preparation.
 
-These sections describe source implementations, not published or independently
-audited release. Before publication, replace it with a dated release entry,
-review changes and security fixes, link advisories where applicable, and record
-the exact source revision and supported platforms.
+Dated entries describe release contents. Verify publication, source revision,
+supported platforms and attestations against the corresponding GitHub Release;
+entries explicitly labelled as source tags or baselines were not published as
+binary releases. No entry claims an independent security audit.

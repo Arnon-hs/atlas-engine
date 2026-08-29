@@ -1239,6 +1239,7 @@ fn symlink_output_destination_is_rejected() {
     assert_eq!(fs::read_to_string(victim).unwrap(), "unchanged");
 }
 
+#[cfg(unix)]
 #[test]
 fn closed_diagnostics_pipe_never_overwrites_an_existing_output() {
     let outside = tempfile::tempdir().unwrap();
@@ -1246,7 +1247,9 @@ fn closed_diagnostics_pipe_never_overwrites_an_existing_output() {
     let prior = b"PRIOR_ACCEPTED_OUTPUT";
     fs::write(&target, prior).unwrap();
 
-    let mut child = engine_command(
+    let (diagnostics_reader, diagnostics_writer) = rustix::pipe::pipe().unwrap();
+    drop(diagnostics_reader);
+    let child = engine_command(
         &[
             "version",
             "--format",
@@ -1259,10 +1262,9 @@ fn closed_diagnostics_pipe_never_overwrites_an_existing_output() {
         None,
     )
     .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
+    .stderr(Stdio::from(diagnostics_writer))
     .spawn()
     .unwrap();
-    drop(child.stderr.take());
     let output = child.wait_with_output().unwrap();
 
     assert_eq!(output.status.code(), Some(4));

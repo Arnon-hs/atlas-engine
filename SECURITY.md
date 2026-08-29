@@ -5,8 +5,9 @@
 **Do not report vulnerabilities or post real credentials in public issues, pull
 requests, or discussions.** Preferred channel:
 [GitHub Private Vulnerability Reporting](https://github.com/Arnon-hs/atlas-engine/security/advisories/new).
-This channel works only after the repository owner enables it. Its activation is
-listed as pending in the [hardening checklist](docs/security/github-hardening.md).
+The repository owner verified this channel as enabled through GitHub's API on
+2026-08-29; reporters should still confirm that the private form is shown before
+entering sensitive details.
 
 If GitHub does not show a private reporting option, do not attach sensitive
 details publicly. Ask for a private security contact through a generic issue
@@ -41,14 +42,13 @@ release; no finding is closed based only on a tool's successful exit status.
 
 | Version | Policy |
 | --- | --- |
-| Unreleased 0.4 development source | Best-effort fixes on `main`; no released support window yet |
-| Future latest release | Intended to receive fixes until superseded by a later supported minor; exact dates must accompany a release |
-| Earlier source baselines/previews | No promised backports; explicit exceptions require a published support notice |
+| Latest `0.4.x` patch | Best-effort security fixes through 2027-02-28; users must update to the latest `0.4.x` patch |
+| `v0.4.0` source tag and earlier source baselines | No promised backports; explicit exceptions require a published support notice |
 
-Do not infer a maintenance guarantee from a version number. Before the first
-release, the owner must publish the actual supported version(s), support period,
-security contacts, and end-of-support notices. No release or security assessment
-completion is claimed by this policy file.
+Do not infer a maintenance guarantee from a version number. The support window
+is a best-effort maintainer commitment rather than a staffed SLA. A later release
+must update this table before changing the supported line or end date. No
+independent security-assessment completion is claimed by this policy file.
 
 ## Boundary and secrets management
 
