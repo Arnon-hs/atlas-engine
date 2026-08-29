@@ -40,7 +40,7 @@ Supply no provider credentials. Deny outbound network access, mount the checkout
 read-only, run without elevated privileges, and apply per-job CPU, memory, wall
 time, disk/output and process limits. The engine requires no network at runtime.
 Materialize the snapshot without hardlinks or nested mounts exposing unrelated
-host files; v0.1 does not distinguish those aliases from ordinary in-root files.
+host files; the engine does not distinguish those aliases from ordinary in-root files.
 Native parser failure is contained by the process boundary, not by a promise of
 in-process sandboxing.
 
@@ -69,8 +69,8 @@ diagnostics; JSONL contains findings only, so the exit status is essential.
 
 HEAD alone does not prove a clean worktree. Record the acquisition commit plus
 checkout cleanliness/immutability evidence independently. For an empty index,
-validate a separate analysis manifest before committing an empty snapshot. v0.1
-has no index footer carrying this information.
+validate a separate analysis manifest before committing an empty snapshot. The
+legacy schema 1 index stream, including on engine 0.2, has no such footer.
 
 Indexing always redacts recognized high-confidence patterns; there is no consumer
 flag that disables it. Redaction does not guarantee that all credentials, private
@@ -91,3 +91,21 @@ an OS isolation layer. A production Scout adapter must add those layers.
 Retry scheduling, acquisition, quota handling, embeddings, persistence, moderation
 and publication are caller responsibilities. Do not wrap a failed engine scan in
 an unbounded retry loop or run repository installation scripts to "fix" its input.
+
+## Opt-in v0.2 snapshots
+
+The existing integration above and generic Node example use the unchanged v1
+chunk stream, including its lack of a footer. Engine 0.2 separately adds
+`index --format events-jsonl` and `--since /state/accepted.manifest.json`.
+Read the [complete protocol](../contracts/index-snapshots-v2.md) before adopting it.
+Its baseline is an engine v2 manifest, not the example's consumer job manifest.
+
+Treat this as a separately reviewed adapter: validate start/complete sequencing,
+the raw event digest, manifest/configuration/selection identities, prior hashes,
+counts and target inventory. Rebind retained chunk commit provenance and use
+consumer-owned atomic compare-and-swap on the expected active base. An abort,
+incomplete scan, stale base or incompatible policy must preserve the old index.
+The engine still rescans every target file and supplies no queue, database writer,
+Git-ancestry verification or production activation. Pin engine versions and
+keep any initial integration in offline/shadow mode until these caller controls
+are implemented and tested.

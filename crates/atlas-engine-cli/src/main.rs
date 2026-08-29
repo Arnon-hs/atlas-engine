@@ -3,13 +3,16 @@
 #![forbid(unsafe_code)]
 
 use std::io::{self, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use repo_core::{CoreError, Diagnostic, ENGINE_VERSION, Repository, SCHEMA_VERSION, ScanOptions};
-use repo_indexer::{IndexOptions, index_to_writer};
+use repo_indexer::{
+    IndexOptions, MAX_MANIFEST_BYTES, SNAPSHOT_SCHEMA_VERSION, SnapshotError, SnapshotManifest,
+    index_to_writer, read_manifest, snapshot_to_writer,
+};
 use repo_security::Severity;
 use serde::Serialize;
 use serde_json::json;
@@ -43,6 +46,9 @@ enum Command {
         /// Maximum UTF-8 content bytes per chunk; oversized symbols are subdivided.
         #[arg(long, default_value_t = 16_384)]
         max_chunk_bytes: usize,
+        /// Accepted manifest JSON outside the input tree; not a Git ref. Requires events-jsonl.
+        #[arg(long, value_name = "MANIFEST_JSON")]
+        since: Option<PathBuf>,
     },
     /// Secrets, dangerous primitives and configuration signals (not full SAST).
     Security {
@@ -73,6 +79,7 @@ enum Format {
     Human,
     Json,
     Jsonl,
+    EventsJsonl,
     Sarif,
 }
 
@@ -222,20 +229,59 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             scan,
             format,
             max_chunk_bytes,
+            since,
         } => {
             require_format(
                 format,
-                &[Format::Human, Format::Json, Format::Jsonl],
-                "index supports human, json or jsonl",
+                &[
+                    Format::Human,
+                    Format::Json,
+                    Format::Jsonl,
+                    Format::EventsJsonl,
+                ],
+                "index supports human, json, jsonl or events-jsonl",
             )?;
+            if since.is_some() && format != Format::EventsJsonl {
+                return Err(Failure {
+                    code: 2,
+                    message: "--since requires --format events-jsonl and an accepted manifest file"
+                        .into(),
+                });
+            }
+            if format == Format::EventsJsonl
+                && scan
+                    .repo_id
+                    .as_deref()
+                    .is_none_or(|id| id.trim().is_empty())
+            {
+                return Err(Failure {
+                    code: 2,
+                    message: "events-jsonl requires a nonempty --repo-id".into(),
+                });
+            }
             if !(4..=1_048_576).contains(&max_chunk_bytes) {
                 return Err(Failure {
                     code: 2,
                     message: "max-chunk-bytes must be between 4 and 1048576".into(),
                 });
             }
+            let baseline = since
+                .as_deref()
+                .map(|path| read_baseline_manifest(path, &scan.path))
+                .transpose()?;
             let repository = scan.open()?;
             let options = IndexOptions { max_chunk_bytes };
+            if format == Format::EventsJsonl {
+                let summary =
+                    snapshot_to_writer(&repository, &options, baseline.as_ref(), &mut output)
+                        .map_err(snapshot_failure)?;
+                emit_diagnostics(&summary.diagnostics);
+                if !summary.complete {
+                    exit_code = 6;
+                }
+                output.flush().context("stdout flush failed")?;
+                return Ok(exit_code);
+            }
             let summary = match format {
                 Format::Jsonl => index_to_writer(&repository, &options, &mut output)
                     .context("indexing failed")?,
@@ -266,6 +312,11 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             format,
             fail_on,
         } => {
+            require_format(
+                format,
+                &[Format::Human, Format::Json, Format::Jsonl, Format::Sarif],
+                "security supports human, json, jsonl or sarif",
+            )?;
             let repository = scan.open()?;
             let report = repo_security::scan(&repository).context("security scanning failed")?;
             emit_diagnostics(&report.diagnostics);
@@ -323,6 +374,12 @@ fn run(cli: Cli) -> Result<u8, Failure> {
                     )
                     .context("stdout write failed")?;
                 }
+                Format::EventsJsonl => {
+                    return Err(Failure {
+                        code: 2,
+                        message: "events-jsonl is an index-only format".into(),
+                    });
+                }
             }
         }
         Command::Doctor { scan, format } => {
@@ -354,7 +411,7 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             if format == Format::Json {
                 write_json(&mut output, &report)?;
             } else {
-                writeln!(output, "atlas-engine {ENGINE_VERSION}; schema {SCHEMA_VERSION}\nInput opened safely; {} files selected, {} diagnostics.\nAST: PHP, JavaScript, TypeScript, Python. No network or repository execution.\nUse a read-only snapshot and external CPU/memory/time limits for hostile input.\nGit churn: not implemented in v0.1.", repository.files.len(), repository.diagnostics.len()).context("stdout write failed")?;
+                writeln!(output, "atlas-engine {ENGINE_VERSION}; schema {SCHEMA_VERSION}\nInput opened safely; {} files selected, {} diagnostics.\nAST: PHP, JavaScript, TypeScript, Python. No network or repository execution.\nUse a read-only snapshot and external CPU/memory/time limits for hostile input.\nGit churn and Git history acceleration: not implemented.", repository.files.len(), repository.diagnostics.len()).context("stdout write failed")?;
             }
         }
         Command::Version { format } => {
@@ -366,12 +423,16 @@ fn run(cli: Cli) -> Result<u8, Failure> {
             if format == Format::Json {
                 write_json(
                     &mut output,
-                    &json!({"schema_version": SCHEMA_VERSION, "engine_version": ENGINE_VERSION}),
+                    &json!({
+                        "schema_version": SCHEMA_VERSION,
+                        "engine_version": ENGINE_VERSION,
+                        "index_snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION
+                    }),
                 )?;
             } else {
                 writeln!(
                     output,
-                    "atlas-engine {ENGINE_VERSION} (schema {SCHEMA_VERSION})"
+                    "atlas-engine {ENGINE_VERSION} (schema {SCHEMA_VERSION}; index snapshots {SNAPSHOT_SCHEMA_VERSION})"
                 )
                 .context("stdout write failed")?;
             }
@@ -379,6 +440,107 @@ fn run(cli: Cli) -> Result<u8, Failure> {
     }
     output.flush().context("stdout flush failed")?;
     Ok(exit_code)
+}
+
+fn snapshot_failure(error: SnapshotError) -> Failure {
+    let code = if error.is_configuration() {
+        2
+    } else if error.is_input() {
+        3
+    } else {
+        4
+    };
+    Failure {
+        code,
+        message: error.to_string(),
+    }
+}
+
+/// A baseline is explicit caller-owned input, never discovered in the repository.
+/// Resolve its parent before checking containment, then pin each directory
+/// component without following links. The final open is capability-relative and
+/// nonblocking, so ancestor-link and FIFO replacement races cannot redirect it.
+fn read_baseline_manifest(path: &Path, repository: &Path) -> Result<SnapshotManifest, Failure> {
+    let invalid = || Failure {
+        code: 3,
+        message: "baseline must be a bounded ordinary manifest file outside the repository".into(),
+    };
+    let root = std::fs::canonicalize(repository).map_err(|_| invalid())?;
+    let filename = path.file_name().ok_or_else(invalid)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = std::fs::canonicalize(parent).map_err(|_| invalid())?;
+    let requested = parent.join(filename);
+    if requested.starts_with(&root) {
+        return Err(invalid());
+    }
+    let directory = open_manifest_parent(&parent).map_err(|_| invalid())?;
+    let metadata = directory
+        .symlink_metadata(filename)
+        .map_err(|_| invalid())?;
+    if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES as u64 {
+        return Err(invalid());
+    }
+    let file = open_manifest_file(&directory, filename).map_err(|_| invalid())?;
+    let opened = file.metadata().map_err(|_| invalid())?;
+    if !opened.is_file() || opened.len() > MAX_MANIFEST_BYTES as u64 {
+        return Err(invalid());
+    }
+    read_manifest(file).map_err(snapshot_failure)
+}
+
+fn open_manifest_parent(path: &Path) -> io::Result<cap_std::fs::Dir> {
+    use cap_fs_ext::DirExt;
+    use std::path::Component;
+
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid parent",
+        ));
+    }
+    let mut directory = cap_std::fs::Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => directory = directory.open_dir_nofollow(name)?,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "unsupported parent component",
+                ));
+            }
+        }
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_manifest_file(
+    directory: &cap_std::fs::Dir,
+    name: &std::ffi::OsStr,
+) -> io::Result<cap_std::fs::File> {
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsExt, OpenOptionsFollowExt};
+
+    let mut options = cap_std::fs::OpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    directory.open_with(name, &options)
+}
+
+#[cfg(not(unix))]
+fn open_manifest_file(
+    _directory: &cap_std::fs::Dir,
+    _name: &std::ffi::OsStr,
+) -> io::Result<cap_std::fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "baseline file boundary requires a supported Unix platform",
+    ))
 }
 
 fn require_format(format: Format, allowed: &[Format], message: &str) -> Result<(), Failure> {
@@ -572,5 +734,31 @@ mod tests {
         let escaped = safe_text("bad\u{1b}[31m\u{202e}filename");
         assert!(!escaped.contains('\u{1b}'));
         assert!(!escaped.contains('\u{202e}'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pinned_manifest_parent_cannot_be_redirected_by_ancestor_link_replacement() {
+        use std::io::Read;
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let outside = root.join("state");
+        let repository = root.join("repository");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::write(outside.join("base.json"), "accepted-state").unwrap();
+        std::fs::write(repository.join("base.json"), "repository-input").unwrap();
+
+        let parent = open_manifest_parent(&outside).unwrap();
+        std::fs::rename(&outside, root.join("retained-state")).unwrap();
+        symlink(&repository, &outside).unwrap();
+        let mut file = open_manifest_file(&parent, std::ffi::OsStr::new("base.json")).unwrap();
+        let mut value = String::new();
+        file.read_to_string(&mut value).unwrap();
+        assert!(value == "accepted-state");
+        // A swap before pinning is also rejected instead of following the link.
+        assert!(open_manifest_parent(&outside).is_err());
     }
 }

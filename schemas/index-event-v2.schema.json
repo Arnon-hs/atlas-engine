@@ -1,0 +1,444 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/index-event-v2.schema.json",
+  "title": "Atlas Engine transactional index event v2",
+  "description": "One JSON value per JSONL line. Schema validity alone does not prove a transaction: verify event order, stream hash, counts, baseline identity, manifest and successful process termination. Never apply staged mutations without snapshot.complete.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "engine_version",
+        "repository_id",
+        "commit_sha",
+        "base_snapshot_id",
+        "configuration_id",
+        "selection_id"
+      ],
+      "properties": {
+        "type": {
+          "const": "snapshot.start"
+        },
+        "schema_version": {
+          "const": "2.0"
+        },
+        "engine_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/repositoryId"
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/commit"
+        },
+        "base_snapshot_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "selection_id": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "record"
+      ],
+      "properties": {
+        "type": {
+          "const": "chunk.upsert"
+        },
+        "schema_version": {
+          "const": "2.0"
+        },
+        "record": {
+          "$ref": "#/$defs/indexRecord"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "relative_path",
+        "chunk_id",
+        "previous_record_hash"
+      ],
+      "properties": {
+        "type": {
+          "const": "chunk.delete"
+        },
+        "schema_version": {
+          "const": "2.0"
+        },
+        "relative_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "chunk_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "previous_record_hash": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "base_snapshot_id",
+        "snapshot_id",
+        "transaction_id",
+        "events_hash",
+        "upserts",
+        "deletes",
+        "unchanged",
+        "manifest"
+      ],
+      "properties": {
+        "type": {
+          "const": "snapshot.complete"
+        },
+        "schema_version": {
+          "const": "2.0"
+        },
+        "base_snapshot_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "transaction_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "events_hash": {
+          "$ref": "#/$defs/digest"
+        },
+        "upserts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "deletes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "unchanged": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "manifest": {
+          "$ref": "#/$defs/manifest"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "reason_codes"
+      ],
+      "properties": {
+        "type": {
+          "const": "snapshot.abort"
+        },
+        "schema_version": {
+          "const": "2.0"
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "snapshot.input_incomplete",
+              "snapshot.base_path_excluded",
+              "snapshot.manifest_limit",
+              "snapshot.metadata_invalid",
+              "snapshot.diagnostics_limit"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commit": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      ]
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\u0000-\u001f-؜‎‏‪-‮⁦-⁩]+$",
+      "description": "The runtime enforces a 1024 UTF-8 byte bound and rejects recognized secret patterns."
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\u0000-\u001f-؜‎‏‪-‮⁦-⁩]+(?:/[^/\\\\\u0000-\u001f-؜‎‏‪-‮⁦-⁩]+)*$",
+      "description": "Portable root-relative path. The runtime additionally enforces a 4096 UTF-8 byte bound and rejects recognized secret patterns."
+    },
+    "chunk": {
+      "type": "object",
+      "required": [
+        "chunk_id",
+        "content_hash",
+        "record_hash"
+      ],
+      "properties": {
+        "chunk_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/digest"
+        },
+        "record_hash": {
+          "$ref": "#/$defs/digest",
+          "description": "Fingerprint of every v1 record field except commit_sha. On transaction application, retained records must be rebound to the manifest commit."
+        }
+      },
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "required": [
+        "relative_path",
+        "chunks"
+      ],
+      "properties": {
+        "relative_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "chunks": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "$ref": "#/$defs/chunk"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "manifest": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "engine_version",
+        "repository_id",
+        "commit_sha",
+        "configuration_id",
+        "selection_id",
+        "snapshot_id",
+        "complete",
+        "files"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "2.0"
+        },
+        "engine_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/repositoryId"
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/commit"
+        },
+        "configuration_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "selection_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "snapshot_id": {
+          "$ref": "#/$defs/digest"
+        },
+        "complete": {
+          "const": true
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "indexRecord": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "engine_version",
+        "repository_id",
+        "commit_sha",
+        "relative_path",
+        "language",
+        "chunk_id",
+        "content_hash",
+        "symbol_kind",
+        "symbol_name",
+        "qualified_name",
+        "start_line",
+        "end_line",
+        "start_byte",
+        "end_byte",
+        "content",
+        "redacted",
+        "redaction_count",
+        "part_index"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "engine_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
+        },
+        "repository_id": {
+          "$ref": "#/$defs/repositoryId"
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/commit"
+        },
+        "relative_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "php",
+            "javascript",
+            "typescript",
+            "python",
+            "json",
+            "yaml",
+            "toml",
+            "markdown",
+            "shell",
+            "rust",
+            "unknown"
+          ]
+        },
+        "chunk_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "BLAKE3 of emitted redacted UTF-8 content, not original secret material."
+        },
+        "symbol_kind": {
+          "type": "string",
+          "enum": [
+            "file",
+            "class",
+            "interface",
+            "trait",
+            "function",
+            "method",
+            "constructor",
+            "module",
+            "constant"
+          ]
+        },
+        "symbol_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "qualified_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Exclusive end offset in the original source."
+        },
+        "content": {
+          "type": "string"
+        },
+        "redacted": {
+          "type": "boolean"
+        },
+        "redaction_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "part_index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

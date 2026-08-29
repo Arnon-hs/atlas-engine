@@ -27,6 +27,10 @@ pub struct Repository {
     pub diagnostics: Vec<Diagnostic>,
     pub metadata: RepositoryMetadata,
     pub options: ScanOptions,
+    /// BLAKE3 identity of the relative paths and bytes of ignore metadata read
+    /// during this inventory. Incomplete metadata diagnostics must still be
+    /// rejected by callers; this is not a completeness or source-content proof.
+    pub selection_fingerprint: String,
     root: Arc<Dir>,
 }
 
@@ -59,13 +63,22 @@ impl Repository {
             read_bytes: 0,
             ignore_bytes: 0,
             ignore_patterns: 0,
+            ignore_metadata: Vec::new(),
             stopped: false,
             suppressed: 0,
         };
         let mut scopes = Vec::new();
         if let Some(exclude) = &git.exclude {
             state.ignore_bytes += exclude.len();
-            state.add_ignore_scope("", ".git/info/exclude", exclude, &mut scopes);
+            state.record_ignore_metadata(".git/info/exclude", exclude);
+            match std::str::from_utf8(exclude) {
+                Ok(source) => state.add_ignore_scope("", ".git/info/exclude", source, &mut scopes),
+                Err(_) => state.diagnostic(Diagnostic::new(
+                    "ignore_invalid",
+                    Some(".git/info/exclude"),
+                    "Git exclude rules are not UTF-8",
+                )),
+            }
         }
         state.walk(&root, "", 0, &mut scopes, false);
         state
@@ -78,6 +91,7 @@ impl Repository {
         });
         let files = std::mem::take(&mut state.files);
         let diagnostics = std::mem::take(&mut state.diagnostics);
+        let selection_fingerprint = selection_fingerprint(&mut state.ignore_metadata);
         drop(state);
         Ok(Self {
             files,
@@ -87,6 +101,7 @@ impl Repository {
                 git: git.metadata,
             },
             options,
+            selection_fingerprint,
             root,
         })
     }
@@ -311,6 +326,20 @@ fn compile_patterns<'a>(root: &str, lines: impl Iterator<Item = &'a str>) -> Res
     builder.build().map_err(|_| ())
 }
 
+fn selection_fingerprint(records: &mut [(String, blake3::Hash)]) -> String {
+    records.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut hash = blake3::Hasher::new_derive_key("atlas-engine.repository-selection.v1");
+    hash.update(&(records.len() as u64).to_le_bytes());
+    for (path, digest) in records {
+        hash.update(&(path.len() as u64).to_le_bytes());
+        hash.update(path.as_bytes());
+        // BLAKE3 digests have a fixed 32-byte width. Paths are length-prefixed
+        // and the record count is explicit, so field boundaries are unambiguous.
+        hash.update(digest.as_bytes());
+    }
+    hash.finalize().to_hex().to_string()
+}
+
 struct WalkState<'a> {
     options: &'a ScanOptions,
     git: &'a GitState,
@@ -321,11 +350,27 @@ struct WalkState<'a> {
     read_bytes: u64,
     ignore_bytes: usize,
     ignore_patterns: usize,
+    ignore_metadata: Vec<(String, blake3::Hash)>,
     stopped: bool,
     suppressed: usize,
 }
 
 impl WalkState<'_> {
+    fn record_ignore_metadata(&mut self, path: &str, bytes: &[u8]) {
+        // Empty files consume no byte/line budget. Bound their fingerprint
+        // retention with the existing metadata pattern limit as well.
+        if self.ignore_metadata.len() == MAX_IGNORE_PATTERNS {
+            self.diagnostic(Diagnostic::new(
+                "ignore_limit",
+                Some(path),
+                "Ignore metadata scope budget reached; selection identity is incomplete",
+            ));
+            return;
+        }
+        self.ignore_metadata
+            .push((path.to_owned(), blake3::hash(bytes)));
+    }
+
     fn diagnostic(&mut self, diagnostic: Diagnostic) {
         if self.diagnostics.len() < MAX_DIAGNOSTICS - 1 {
             self.diagnostics.push(diagnostic);
@@ -416,14 +461,17 @@ impl WalkState<'_> {
             Err(error) => Err(io_failure(error)),
         };
         match ignore_read {
-            Ok(bytes) => match std::str::from_utf8(&bytes) {
-                Ok(source) => self.add_ignore_scope(prefix, &ignore_path, source, scopes),
-                Err(_) => self.diagnostic(Diagnostic::new(
-                    "ignore_invalid",
-                    Some(&ignore_path),
-                    "Ignore rules are not valid UTF-8",
-                )),
-            },
+            Ok(bytes) => {
+                self.record_ignore_metadata(&ignore_path, &bytes);
+                match std::str::from_utf8(&bytes) {
+                    Ok(source) => self.add_ignore_scope(prefix, &ignore_path, source, scopes),
+                    Err(_) => self.diagnostic(Diagnostic::new(
+                        "ignore_invalid",
+                        Some(&ignore_path),
+                        "Ignore rules are not valid UTF-8",
+                    )),
+                }
+            }
             Err(ReadFailure::NotFound) => {}
             Err(error) => self.diagnostic(error.diagnostic(Some(&ignore_path))),
         }

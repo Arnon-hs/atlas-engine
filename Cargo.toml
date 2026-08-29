@@ -9,7 +9,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
@@ -19,10 +19,10 @@ keywords = ["static-analysis", "security", "code-search", "tree-sitter"]
 categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
-repo-core = { package = "atlas-repo-core", path = "crates/repo-core", version = "0.1.0" }
-repo-analyzer = { package = "atlas-repo-analyzer", path = "crates/repo-analyzer", version = "0.1.0" }
-repo-indexer = { package = "atlas-repo-indexer", path = "crates/repo-indexer", version = "0.1.0" }
-repo-security = { package = "atlas-repo-security", path = "crates/repo-security", version = "0.1.0" }
+repo-core = { package = "atlas-repo-core", path = "crates/repo-core", version = "0.2.0" }
+repo-analyzer = { package = "atlas-repo-analyzer", path = "crates/repo-analyzer", version = "0.2.0" }
+repo-indexer = { package = "atlas-repo-indexer", path = "crates/repo-indexer", version = "0.2.0" }
+repo-security = { package = "atlas-repo-security", path = "crates/repo-security", version = "0.2.0" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.20"

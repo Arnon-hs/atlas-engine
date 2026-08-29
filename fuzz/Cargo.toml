@@ -10,8 +10,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-repo-core = { package = "atlas-repo-core", version = "0.1.0", path = "../crates/repo-core" }
-repo-indexer = { package = "atlas-repo-indexer", version = "0.1.0", path = "../crates/repo-indexer" }
+repo-core = { package = "atlas-repo-core", version = "0.2.0", path = "../crates/repo-core" }
+repo-indexer = { package = "atlas-repo-indexer", version = "0.2.0", path = "../crates/repo-indexer" }
 
 [workspace]
 members = ["."]
@@ -48,6 +48,13 @@ bench = false
 [[bin]]
 name = "tree_sitter_wrapper"
 path = "fuzz_targets/tree_sitter_wrapper.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot_manifest"
+path = "fuzz_targets/snapshot_manifest.rs"
 test = false
 doc = false
 bench = false

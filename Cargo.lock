@@ -116,7 +116,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
 name = "atlas-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "atlas-repo-analyzer",
@@ -124,8 +124,12 @@ dependencies = [
  "atlas-repo-indexer",
  "atlas-repo-security",
  "blake3",
+ "cap-fs-ext",
+ "cap-std",
  "clap",
  "jsonschema",
+ "libc",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -133,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-analyzer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "atlas-repo-core",
  "serde",
@@ -144,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "cap-fs-ext",
@@ -167,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-indexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "atlas-repo-analyzer",
  "atlas-repo-core",
@@ -184,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-repo-security"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "atlas-repo-core",
  "blake3",

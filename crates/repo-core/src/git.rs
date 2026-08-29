@@ -13,7 +13,7 @@ use crate::{Diagnostic, GitMetadata, normalize_relative_path};
 pub(crate) struct GitState {
     pub metadata: GitMetadata,
     pub tracked: Option<BTreeSet<String>>,
-    pub exclude: Option<String>,
+    pub exclude: Option<Vec<u8>>,
 }
 
 impl GitState {
@@ -134,14 +134,7 @@ pub(crate) fn inspect(root: &Dir, diagnostics: &mut Vec<Diagnostic>) -> GitState
         )),
     }
     match read_relative(&git, "info/exclude", 64 * 1024) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(value) => result.exclude = Some(value),
-            Err(_) => diagnostics.push(Diagnostic::new(
-                "ignore_invalid",
-                Some(".git/info/exclude"),
-                "Git exclude rules are not UTF-8",
-            )),
-        },
+        Ok(bytes) => result.exclude = Some(bytes),
         Err(ReadFailure::NotFound) => {}
         Err(_) => diagnostics.push(Diagnostic::new(
             "git_exclude_unavailable",

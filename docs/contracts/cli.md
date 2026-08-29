@@ -8,7 +8,7 @@ isolates the source tree.
 | Command | Purpose | Machine formats |
 | --- | --- | --- |
 | `analyze PATH` | Summary, language/size/manifest/duplicate inventory | JSON |
-| `index PATH` | Structural redacted chunks | JSONL primary; JSON/human for inspection |
+| `index PATH` | Structural redacted chunks and opt-in snapshots | JSONL primary; events-jsonl; JSON/human for inspection |
 | `security PATH` | Static findings | JSON, JSONL, SARIF 2.1.0 |
 | `doctor PATH` | Input and configured-bound diagnostics | JSON/human |
 | `version` | Engine and schema identity | JSON/human |
@@ -33,6 +33,7 @@ timeout, decode failure, or output-write failure.
 | `--max-parse-millis` | 100 | Cooperative parser deadline per file |
 | `--threads` | available CPUs capped at 8 | Accepted worker range 1–32 |
 | `index --max-chunk-bytes` | 16,384 | Maximum original bytes per chunk |
+| `index --since MANIFEST_JSON` | absent | Accepted v2 manifest outside input; requires events-jsonl; never a Git ref |
 
 CLI rejects invalid bounds. These controls do not replace OS memory/CPU limits,
 an external wall-time deadline, bounded stderr, and a bounded consumer parser.
@@ -42,9 +43,11 @@ consumer. Do not log absolute input paths when recording a portable job record.
 ## Exit codes
 
 0: successful command, possibly with skips/findings. 2: CLI/configuration error.
-3: input repository error. 4: internal scan/output error. 5: a security finding
+3: input repository or baseline manifest error. 4: internal scan/output error. 5: a security finding
 meets an explicitly requested `--fail-on` threshold. 6: `--fail-on` was requested
-but scan coverage was incomplete; this takes precedence over 5. Available output
+but scan coverage was incomplete; this takes precedence over 5. In index
+`events-jsonl` mode, incomplete coverage also exits 6 without a completion event
+or deletions. Available output
 is still emitted, including for JSONL/SARIF, so always inspect the process status.
 
 Security JSON reports set `truncated: true` for parser failures/budgets, input or
@@ -57,6 +60,11 @@ scope; their exclusion alone does not mark the report truncated. Unsupported
 UTF-8/path encoding does mark it incomplete. A pass never proves that all
 vulnerabilities or secret formats were detected.
 
-Version `1.0` is the engine's JSON schema contract version. SARIF uses the
+Version `1.0` remains the legacy JSON record contract. Opt-in index events and
+manifests use `2.0`; see [snapshot acceptance](index-snapshots-v2.md). A nonempty
+repository ID is mandatory in that mode, and `--since` requires a compatible
+accepted manifest. Invalid/incompatible bases produce no stdout. Version JSON
+adds `index_snapshot_schema_version` alongside the legacy `schema_version`.
+SARIF uses the
 independent OASIS format version `2.1.0`. CLI presentation text is not a machine
 contract. Parse versioned JSON; do not scrape the human table output.

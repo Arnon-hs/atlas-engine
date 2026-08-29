@@ -1,6 +1,7 @@
 # Machine contract and compatibility policy
 
-The v0.1 engine version is `0.1.0`; the initial JSON contract is `1.0`. Engine
+The current engine version is `0.2.0`; the legacy JSON contract remains `1.0`.
+Opt-in index snapshot events/manifests use `2.0`. Engine
 SemVer and schema versions evolve independently. The JSON schemas in `schemas/`
 are public API, alongside field semantics in this document. SARIF follows the
 OASIS 2.1.0 schema separately.
@@ -18,7 +19,10 @@ use exact tested versions where needed.
 
 ## Provenance and coordinates
 
-All records include schema and engine versions. A supplied repository ID is
+Legacy records include schema and engine versions. Every v2 outer event includes
+the schema version; engine/repository/commit provenance is carried by its start
+event and accepted target manifest, not repeated on every delete/abort event.
+A supplied repository ID is
 consumer identity, not a verified remote owner. `commit_sha` describes recognized
 HEAD metadata, not an assertion that tracked files are unmodified, that untracked
 files are absent, or that the worktree was immutable. Isolate a known snapshot and
@@ -51,13 +55,16 @@ recognized tokens. Redaction preserves byte ranges and line breaks.
 ## Streams and completeness
 
 JSONL contains one complete JSON value per line, in deterministic order for a
-fixed snapshot, options and engine. The v1 index stream has no transaction/footer
+fixed snapshot, options and engine. The v1 index stream still has no transaction/footer
 record. A consumer must stage it and accept only after successful termination.
 An empty stream has no per-record engine/schema/commit provenance; obtain a
 separate analyze manifest before using it to replace an existing index. Our
 small Node example rejects empty streams conservatively.
 
-An engine success may still include skipped files. A complete index replacement,
-or a future deletion event, requires an explicit completeness decision based on
-diagnostics and policy, not merely an empty or short result list. See
+An engine success in legacy modes may still include skipped files. Schema 2.0
+snapshot mode is stricter: incomplete scans emit an abort and exit 6, with no
+completion or delete events. Its per-record fingerprint excludes commit SHA;
+retained records adopt the accepted target manifest's commit provenance.
+Both transaction validation and a consumer-owned compare-and-swap are required.
+See [snapshot contract](index-snapshots-v2.md) and
 [incremental design](../architecture/incremental-indexing.md).

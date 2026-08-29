@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Arnon-hs/atlas-engine/blob/main/schemas/index-manifest-v2.schema.json",
+  "title": "Atlas Engine complete index snapshot manifest v2",
+  "description": "Only a verified complete manifest may be a delta baseline. Runtime validation also checks byte and aggregate limits, sorted paths/chunks, unique chunk IDs, safe metadata and the snapshot digest. Schema validation alone is not acceptance.",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})$" }
+      ]
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+$",
+      "description": "The runtime enforces a 1024 UTF-8 byte bound and rejects recognized secret patterns."
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+(?:/[^/\\\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+)*$",
+      "description": "Portable root-relative path. The runtime additionally enforces a 4096 UTF-8 byte bound and rejects recognized secret patterns."
+    },
+    "chunk": {
+      "type": "object",
+      "required": ["chunk_id", "content_hash", "record_hash"],
+      "properties": {
+        "chunk_id": { "$ref": "#/$defs/digest" },
+        "content_hash": { "$ref": "#/$defs/digest" },
+        "record_hash": {
+          "$ref": "#/$defs/digest",
+          "description": "Fingerprint of every v1 record field except commit_sha. On transaction application, retained records must be rebound to the manifest commit."
+        }
+      },
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "required": ["relative_path", "chunks"],
+      "properties": {
+        "relative_path": { "$ref": "#/$defs/relativePath" },
+        "chunks": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": { "$ref": "#/$defs/chunk" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["schema_version", "engine_version", "repository_id", "commit_sha", "configuration_id", "selection_id", "snapshot_id", "complete", "files"],
+      "properties": {
+        "schema_version": { "const": "2.0" },
+        "engine_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+].*)?$" },
+        "repository_id": { "$ref": "#/$defs/repositoryId" },
+        "commit_sha": { "$ref": "#/$defs/commit" },
+        "configuration_id": { "$ref": "#/$defs/digest" },
+        "selection_id": { "$ref": "#/$defs/digest" },
+        "snapshot_id": { "$ref": "#/$defs/digest" },
+        "complete": { "const": true },
+        "files": { "type": "array", "maxItems": 50000, "items": { "$ref": "#/$defs/file" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

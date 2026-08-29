@@ -7,7 +7,7 @@ Offline, read-only repository analysis, structural indexing, and static security
 signals, implemented in Rust. Use it to understand a source tree or produce
 redacted records for search without running anything from that tree.
 
-**Status:** v0.1.0 source implementation; not a claim of a published release,
+**Status:** v0.2.0 source implementation; not a claim of a published release,
 completed third-party security audit, OpenSSF badge, or SLSA level. Hosted CI,
 repository settings and signed release evidence must be verified by maintainers.
 
@@ -16,6 +16,7 @@ repository settings and signed release evidence must be verified by maintainers.
 - Analyzes files, languages, LOC, manifests, exact duplicates, and largest files.
 - Extracts PHP, JavaScript, TypeScript, and Python symbols with Tree-sitter.
 - Writes deterministic structural chunks as versioned JSONL, with default secret redaction.
+- Emits complete snapshot manifests and opt-in upsert/delete transactions from an accepted base.
 - Reports secret patterns, dangerous API usage, and risky configuration in JSON or SARIF.
 - Reads basic Git identity without invoking Git or repository-defined commands.
 
@@ -44,7 +45,7 @@ flowchart TD
 | --- | --- | --- |
 | `crates/repo-core` | `atlas-repo-core` | Filesystem, inert Git metadata, languages, parser registry, hashes, redaction primitives |
 | `crates/repo-analyzer` | `atlas-repo-analyzer` | Repository summary, manifests, duplicates, source size statistics |
-| `crates/repo-indexer` | `atlas-repo-indexer` | AST symbols, bounded chunks, stable identities, deterministic JSONL |
+| `crates/repo-indexer` | `atlas-repo-indexer` | AST symbols, bounded chunks, stable identities, snapshot manifests and deterministic delta events |
 | `crates/repo-security` | `atlas-repo-security` | Secret and dangerous-primitive findings; no exploitability claim |
 | `crates/atlas-engine-cli` | `atlas-engine` | Clap commands, machine contracts, diagnostics, exit codes |
 
@@ -57,7 +58,7 @@ verification, measured benchmarks, source publication and remaining owner action
 
 Prerequisites: Rustup and a native C/C++ build toolchain (Tree-sitter grammars
 compile as part of building **Atlas Engine**, not while scanning a repository).
-The workspace pins Rust 1.98.0, Edition 2024. Native Linux and macOS are the v0.1
+The workspace pins Rust 1.98.0, Edition 2024. Native Linux and macOS are the
 test targets. From this source checkout:
 
 ```bash
@@ -98,6 +99,22 @@ Common scan flags include `--exclude GLOB` (repeatable), `--max-file-size BYTES`
 `--max-parse-millis MS`, and `--threads COUNT`. Indexing additionally accepts
 `--max-chunk-bytes BYTES`. Run `atlas-engine COMMAND --help` for the exact interface.
 
+Opt into schema 2.0 transactions separately:
+
+```bash
+atlas-engine index /snapshots/base --repo-id owner/name --format events-jsonl
+atlas-engine index /snapshots/target --repo-id owner/name --format events-jsonl \
+  --since /state/accepted-base.manifest.json
+```
+
+`--since` reads an accepted **manifest file**, not a Git ref. v0.2 fully rescans
+the target; it avoids retransmitting unchanged chunks but does not accelerate
+Git history or parsing. It rejects incompatible configuration/ignore policies,
+withholds deletions on incomplete scans, and emits a completion envelope even
+for an empty snapshot. Consumers must validate and stage the complete transaction
+and atomically compare-and-swap its base. See the
+[snapshot protocol](docs/contracts/index-snapshots-v2.md) before using deletions.
+
 Machine data goes to stdout; diagnostics go to stderr. Consume both separately
 and require successful process termination before committing streamed output.
 Security findings alone do not fail a command; `--fail-on high` explicitly turns
@@ -112,18 +129,20 @@ diagnostics; the gate applies only to the documented selected scan scope.
 | 3 | Repository/input error |
 | 4 | Internal scan/output failure |
 | 5 | Explicit security threshold reached |
-| 6 | Explicit security gate could not be evaluated completely |
+| 6 | Explicit security gate or schema 2.0 index snapshot was incomplete |
 
 ## Languages and contracts
 
-| Languages | v0.1 indexing |
+| Languages | Indexing |
 | --- | --- |
 | PHP, JavaScript, TypeScript, Python | Tree-sitter symbols and structural chunks |
 | JSON, YAML, TOML, Markdown, Shell, Rust | Language classification and bounded file-level fallback |
 | Other UTF-8 text | File-level fallback where eligible |
 | Binary/invalid UTF-8 | No source parsing; diagnostic/skip behavior |
 
-All engine records carry `schema_version: "1.0"` and `engine_version: "0.1.0"`.
+Legacy records retain `schema_version: "1.0"`; engine identity is `0.2.0`.
+Opt-in index events and snapshot manifests use schema `2.0`; their upsert payloads
+remain v1 chunk records. `version --format json` reports both schema versions.
 Git identity may be absent; absence is not proof of a clean checkout. Index
 `chunk_id` describes logical identity, while `content_hash` describes redacted
 content. Byte ranges refer to the original source. See [contract semantics and
@@ -131,6 +150,8 @@ compatibility](docs/contracts/versioning.md).
 
 - [Analyzer JSON Schema](schemas/analyzer-v1.schema.json)
 - [Index record JSON Schema](schemas/index-record-v1.schema.json)
+- [Index event JSON Schema](schemas/index-event-v2.schema.json)
+- [Index manifest JSON Schema](schemas/index-manifest-v2.schema.json)
 - [Security finding JSON Schema](schemas/security-finding-v1.schema.json)
 - [AtlasRepo Scout subprocess integration](docs/integrations/atlasrepo-scout.md)
 - [Dependency-free Node.js consumer](examples/node-consumer/README.md)
@@ -181,7 +202,8 @@ measurements under the [benchmark methodology](docs/benchmarks.md).
 [Best Practices preparation](docs/security/openssf-best-practices.md), and
 [GitHub hardening](docs/security/github-hardening.md) separate local evidence from
 settings and hosted operations that still need owner action. The
-[roadmap](ROADMAP.md) covers incremental upsert/delete design for v0.2.
+[roadmap](ROADMAP.md) separates v0.2 snapshot/delta delivery from future Git and
+parser-cache acceleration.
 
 ## Contributing, support, and licensing
 

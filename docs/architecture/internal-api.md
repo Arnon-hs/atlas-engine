@@ -1,6 +1,6 @@
-# v0.1 implementation API
+# Implementation API
 
-Coordination contract for the initial implementation. Public Rust details may evolve
+Core contract and v0.2 snapshot extensions. Public Rust details may evolve
 within 0.x; published JSON schema major compatibility is governed separately.
 
 `repo_core` exports the following types. The dependency alias is `repo-core` even
@@ -8,7 +8,7 @@ though its crates.io package is `atlas-repo-core`.
 
 ```text
 SCHEMA_VERSION: &str = "1.0"
-ENGINE_VERSION: &str = "0.1.0"
+ENGINE_VERSION: &str = "0.2.0"
 ScanOptions: Clone + Debug + Default
   max_file_size: u64 (2 MiB)
   max_files: usize (100_000)
@@ -20,7 +20,7 @@ ScanOptions: Clone + Debug + Default
   repository_id: Option<String>
 Repository::open(path: impl AsRef<Path>, options: ScanOptions) -> Result<Repository, CoreError>
 Repository fields: files: Vec<FileRecord>, diagnostics: Vec<Diagnostic>, metadata: RepositoryMetadata,
-                   options: ScanOptions
+                   options: ScanOptions, selection_fingerprint: String
 Repository::read_text(&self, file: &FileRecord) -> Result<String, Diagnostic>
   bounded capability-relative reread, validates original content hash
 RepositoryMetadata: Clone + Debug + Serialize
@@ -79,3 +79,12 @@ comments or strings. Their strings use the same redacted source coordinates and
 their records count toward parser budgets. Dynamic imports, ambiguous spreads,
 computed keys and nonliteral options are not resolved. These typed fields support
 security checks without exposing raw argument source or Tree-sitter nodes.
+
+`repo_indexer` additionally exports `SNAPSHOT_SCHEMA_VERSION = "2.0"`,
+`MAX_MANIFEST_BYTES`, typed `SnapshotManifest` / `ManifestFile` / `ManifestChunk`,
+`read_manifest(impl Read)`, `record_fingerprint(&IndexRecord)` and
+`snapshot_to_writer(&Repository, &IndexOptions, Option<&SnapshotManifest>, impl Write)`.
+The result has completeness, optional accepted manifest, event counts and
+diagnostics. Full target parsing is one file at a time; only bounded metadata is
+retained across files. See [snapshot semantics](../contracts/index-snapshots-v2.md)
+for hash domains, provenance rebinding and consumer acceptance requirements.

@@ -342,7 +342,7 @@ fn detects_common_secret_families_and_masks_only_complete_spans() {
     ] {
         assert!(
             matches.iter().any(|m| m.rule_id == rule),
-            "missing {rule}: {matches:?}"
+            "missing expected secret family: {rule}"
         );
     }
     let redacted = redact_secrets(&source);

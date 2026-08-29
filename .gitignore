@@ -8,6 +8,7 @@
 !/fuzz/corpus/path_handling/traversal.txt
 !/fuzz/corpus/tree_sitter_wrapper/python.txt
 !/fuzz/corpus/chunking/python.txt
+!/fuzz/corpus/snapshot_manifest/empty.json
 /artifacts/
 .DS_Store
 .env

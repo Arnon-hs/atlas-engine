@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -13,7 +14,7 @@ fn root() -> PathBuf {
 fn fixtures() -> PathBuf {
     root().join("fixtures/polyglot")
 }
-fn engine(args: &[&str], path: Option<&Path>) -> Output {
+fn engine_command(args: &[&str], path: Option<&Path>) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_atlas-engine"));
     if let Some((verb, rest)) = args.split_first() {
         command.arg(verb);
@@ -25,7 +26,10 @@ fn engine(args: &[&str], path: Option<&Path>) -> Output {
     // An empty PATH additionally proves none of the ordinary repository tools are
     // required. This is not a substitute for OS sandboxing against all execution.
     command.env("PATH", "").env_remove("RUST_LOG");
-    command.output().unwrap()
+    command
+}
+fn engine(args: &[&str], path: Option<&Path>) -> Output {
+    engine_command(args, path).output().unwrap()
 }
 fn successful(output: &Output) {
     assert!(
@@ -528,4 +532,477 @@ fn version_contract_does_not_need_a_repository() {
     let version = json_output(&engine(&["version", "--format", "json"], None));
     assert_eq!(version["schema_version"], "1.0");
     assert_eq!(version["engine_version"], env!("CARGO_PKG_VERSION"));
+}
+
+fn events_engine(path: &Path, extra: &[&str]) -> Output {
+    let mut args = vec![
+        "index",
+        "--format",
+        "events-jsonl",
+        "--repo-id",
+        "test/events",
+    ];
+    args.extend_from_slice(extra);
+    engine(&args, Some(path))
+}
+
+fn validated_events(output: &Output) -> Vec<Value> {
+    assert!(output.stdout.ends_with(b"\n"));
+    let text = std::str::from_utf8(&output.stdout).unwrap();
+    let events: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for event in &events {
+        validate("index-event-v2.schema.json", event);
+        if event["type"] == "chunk.upsert" {
+            validate("index-record-v1.schema.json", &event["record"]);
+        }
+    }
+    assert_eq!(events.first().unwrap()["type"], "snapshot.start");
+    if let Some(complete) = events.last().filter(|e| e["type"] == "snapshot.complete") {
+        validate("index-manifest-v2.schema.json", &complete["manifest"]);
+        let footer_offset = text.rfind("\n").unwrap();
+        let preceding_end = text[..footer_offset].rfind('\n').unwrap() + 1;
+        assert_eq!(
+            complete["events_hash"],
+            blake3::hash(&output.stdout[..preceding_end])
+                .to_hex()
+                .to_string()
+        );
+        for (event_type, counter) in [("chunk.upsert", "upserts"), ("chunk.delete", "deletes")] {
+            assert_eq!(
+                complete[counter].as_u64().unwrap() as usize,
+                events.iter().filter(|e| e["type"] == event_type).count()
+            );
+        }
+        assert_eq!(complete["snapshot_id"], complete["manifest"]["snapshot_id"]);
+    }
+    events
+}
+
+fn manifest(events: &[Value]) -> &Value {
+    let last = events.last().unwrap();
+    assert_eq!(last["type"], "snapshot.complete");
+    &last["manifest"]
+}
+
+fn upserts(events: &[Value]) -> BTreeMap<String, Value> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "chunk.upsert")
+        .map(|event| {
+            let record = &event["record"];
+            (
+                record["chunk_id"].as_str().unwrap().to_owned(),
+                record.clone(),
+            )
+        })
+        .collect()
+}
+
+fn assert_input_rejected(output: &Output) {
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+}
+
+fn assert_aborted(output: &Output) -> Vec<Value> {
+    assert_eq!(output.status.code(), Some(6));
+    let events = validated_events(output);
+    assert_eq!(events.last().unwrap()["type"], "snapshot.abort");
+    assert!(
+        !events.iter().any(|event| {
+            event["type"] == "chunk.delete" || event["type"] == "snapshot.complete"
+        })
+    );
+    events
+}
+
+#[test]
+fn events_full_snapshot_and_empty_snapshot_have_verified_completion_manifests() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty_output = events_engine(dir.path(), &[]);
+    successful(&empty_output);
+    let empty = validated_events(&empty_output);
+    assert_eq!(empty.len(), 2);
+    assert_eq!(manifest(&empty)["files"], serde_json::json!([]));
+    assert_eq!(empty[0]["base_snapshot_id"], Value::Null);
+    assert_eq!(
+        manifest(&empty)["engine_version"],
+        env!("CARGO_PKG_VERSION")
+    );
+
+    fs::write(dir.path().join("a.py"), "def answer():\n    return 42\n").unwrap();
+    let first = events_engine(dir.path(), &[]);
+    successful(&first);
+    let full = validated_events(&first);
+    assert!(!upserts(&full).is_empty());
+    assert_eq!(manifest(&full)["files"][0]["relative_path"], "a.py");
+    for workers in ["1", "4"] {
+        let repeated = events_engine(dir.path(), &["--threads", workers]);
+        successful(&repeated);
+        assert_eq!(first.stdout, repeated.stdout);
+    }
+    let legacy = jsonl_output(&engine(
+        &["index", "--repo-id", "test/events"],
+        Some(dir.path()),
+    ));
+    let event_records: Vec<_> = full
+        .iter()
+        .filter(|event| event["type"] == "chunk.upsert")
+        .map(|event| event["record"].clone())
+        .collect();
+    assert_eq!(legacy, event_records);
+}
+
+#[test]
+fn events_delta_applied_to_base_equals_fresh_full_after_commit_rebinding() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join(".git")).unwrap();
+    fs::write(
+        dir.path().join(".git/HEAD"),
+        format!("{}\n", "1".repeat(40)),
+    )
+    .unwrap();
+    for (name, value) in [("a.py", 1), ("b.py", 2), ("keep.py", 3)] {
+        fs::write(
+            dir.path().join(name),
+            format!("def answer():\n    return {value}\n"),
+        )
+        .unwrap();
+    }
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+
+    fs::write(dir.path().join("a.py"), "def answer():\n    return 99\n").unwrap();
+    fs::remove_file(dir.path().join("b.py")).unwrap();
+    fs::write(dir.path().join("new.py"), "def added():\n    return 4\n").unwrap();
+    fs::write(
+        dir.path().join(".git/HEAD"),
+        format!("{}\n", "2".repeat(40)),
+    )
+    .unwrap();
+    let delta_output = events_engine(dir.path(), &["--since", baseline.to_str().unwrap()]);
+    successful(&delta_output);
+    let delta = validated_events(&delta_output);
+    assert_eq!(delta[0]["base_snapshot_id"], manifest(&base)["snapshot_id"]);
+    assert_eq!(
+        delta.last().unwrap()["base_snapshot_id"],
+        manifest(&base)["snapshot_id"]
+    );
+    assert!(delta.last().unwrap()["deletes"].as_u64().unwrap() > 0);
+    assert!(delta.last().unwrap()["unchanged"].as_u64().unwrap() > 0);
+
+    let mut applied = upserts(&base);
+    for event in &delta {
+        match event["type"].as_str().unwrap() {
+            "chunk.upsert" => {
+                let record = event["record"].clone();
+                applied.insert(record["chunk_id"].as_str().unwrap().to_owned(), record);
+            }
+            "chunk.delete" => {
+                let old = applied.remove(event["chunk_id"].as_str().unwrap()).unwrap();
+                assert_eq!(event["relative_path"], old["relative_path"]);
+                let old_file = manifest(&base)["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|file| file["relative_path"] == event["relative_path"])
+                    .unwrap();
+                let old_chunk = old_file["chunks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|chunk| chunk["chunk_id"] == event["chunk_id"])
+                    .unwrap();
+                assert_eq!(event["previous_record_hash"], old_chunk["record_hash"]);
+            }
+            _ => {}
+        }
+    }
+    for record in applied.values_mut() {
+        record["commit_sha"] = manifest(&delta)["commit_sha"].clone();
+    }
+    let full_output = events_engine(dir.path(), &[]);
+    successful(&full_output);
+    let full = validated_events(&full_output);
+    assert_eq!(applied, upserts(&full));
+    assert_eq!(manifest(&delta), manifest(&full));
+    assert_eq!(manifest(&full)["commit_sha"], "2".repeat(40));
+
+    // Reusing the completed target manifest creates a no-op transaction, not a
+    // second application of the previous deletes/upserts.
+    fs::write(&baseline, serde_json::to_vec(manifest(&delta)).unwrap()).unwrap();
+    let noop_output = events_engine(dir.path(), &["--since", baseline.to_str().unwrap()]);
+    successful(&noop_output);
+    let noop = validated_events(&noop_output);
+    assert_eq!(noop.len(), 2);
+    assert_eq!(noop.last().unwrap()["upserts"], 0);
+    assert_eq!(noop.last().unwrap()["deletes"], 0);
+    assert_eq!(manifest(&noop), manifest(&full));
+}
+
+#[test]
+fn events_delta_can_commit_a_verified_empty_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("gone.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    fs::remove_file(dir.path().join("gone.py")).unwrap();
+    let output = events_engine(dir.path(), &["--since", baseline.to_str().unwrap()]);
+    successful(&output);
+    let delta = validated_events(&output);
+    assert_eq!(manifest(&delta)["files"], serde_json::json!([]));
+    assert_eq!(delta.last().unwrap()["upserts"], 0);
+    assert_eq!(delta.last().unwrap()["unchanged"], 0);
+    assert_eq!(
+        delta.last().unwrap()["deletes"].as_u64().unwrap() as usize,
+        upserts(&base).len()
+    );
+}
+
+#[test]
+fn events_require_repository_identity_and_since_requires_event_format() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["index", "--format", "events-jsonl"],
+        vec!["index", "--format", "events-jsonl", "--repo-id", ""],
+        vec!["index", "--since", "HEAD"],
+        vec!["index", "--format", "json", "--since", "HEAD"],
+        vec!["analyze", "--format", "events-jsonl"],
+    ] {
+        let output = engine(&args, Some(dir.path()));
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+    let missing_path = dir.path().join("not-a-git-ref");
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", missing_path.to_str().unwrap()],
+    ));
+}
+
+#[test]
+fn events_reject_bad_or_incompatible_manifests_before_writing_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    let invalid_bytes = [b"{".to_vec(), b"null".to_vec(), vec![0xff, 0xfe]];
+    for bytes in invalid_bytes {
+        fs::write(&baseline, bytes).unwrap();
+        assert_input_rejected(&events_engine(
+            dir.path(),
+            &["--since", baseline.to_str().unwrap()],
+        ));
+    }
+    for field in ["commit_sha", "files", "complete"] {
+        let mut changed = manifest(&base).clone();
+        changed.as_object_mut().unwrap().remove(field);
+        fs::write(&baseline, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert_input_rejected(&events_engine(
+            dir.path(),
+            &["--since", baseline.to_str().unwrap()],
+        ));
+    }
+    let encoded = serde_json::to_string(manifest(&base)).unwrap();
+    let duplicate = format!("{{\"repository_id\":\"test/events\",{}", &encoded[1..]);
+    fs::write(&baseline, duplicate).unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    for (field, value) in [
+        ("schema_version", Value::from("99.0")),
+        ("engine_version", Value::from("0.0.1")),
+        ("repository_id", Value::from("other/repository")),
+        ("snapshot_id", Value::from("f".repeat(64))),
+        ("complete", Value::Bool(false)),
+        ("unexpected", Value::Bool(true)),
+    ] {
+        let mut changed = manifest(&base).clone();
+        changed[field] = value;
+        fs::write(&baseline, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert_input_rejected(&events_engine(
+            dir.path(),
+            &["--since", baseline.to_str().unwrap()],
+        ));
+    }
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &[
+            "--since",
+            baseline.to_str().unwrap(),
+            "--max-chunk-bytes",
+            "8",
+        ],
+    ));
+    assert_input_rejected(&engine(
+        &[
+            "index",
+            "--format",
+            "events-jsonl",
+            "--repo-id",
+            "other/repository",
+            "--since",
+            baseline.to_str().unwrap(),
+        ],
+        Some(dir.path()),
+    ));
+}
+
+#[test]
+fn events_reject_oversized_and_inside_input_baseline_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let baseline = outside.path().join("oversized.json");
+    fs::File::create(&baseline)
+        .unwrap()
+        .set_len(16 * 1024 * 1024 + 1)
+        .unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let inside = dir.path().join("baseline.json");
+    fs::write(&inside, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", inside.to_str().unwrap()],
+    ));
+}
+
+// Baseline rejection must be bounded even for special files with no writer.
+// Output should be empty, so polling cannot block on a full stdout pipe here.
+#[cfg(unix)]
+fn bounded_baseline_rejection(path: &Path, baseline: &Path) {
+    let mut child = engine_command(
+        &[
+            "index",
+            "--format",
+            "events-jsonl",
+            "--repo-id",
+            "test/events",
+            "--since",
+            baseline.to_str().unwrap(),
+        ],
+        Some(path),
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let started = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > Duration::from_secs(3) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("baseline rejection exceeded its deadline");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_input_rejected(&child.wait_with_output().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn events_reject_linked_and_special_baselines_without_following_or_blocking() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    let linked = outside.path().join("link.json");
+    std::os::unix::fs::symlink(&baseline, &linked).unwrap();
+    bounded_baseline_rejection(dir.path(), &linked);
+    let socket = outside.path().join("socket");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    bounded_baseline_rejection(dir.path(), &socket);
+    #[cfg(target_os = "linux")]
+    {
+        let fifo = outside.path().join("fifo");
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        bounded_baseline_rejection(dir.path(), &fifo);
+    }
+}
+
+#[test]
+fn events_incomplete_targets_abort_without_deletes_or_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("safe.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    fs::remove_file(dir.path().join("safe.py")).unwrap();
+    let invalid = dir.path().join("invalid.py");
+    fs::write(&invalid, "def broken(:\n    pass\n").unwrap();
+    assert_aborted(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    fs::remove_file(&invalid).unwrap();
+    fs::File::create(dir.path().join("large.py"))
+        .unwrap()
+        .set_len(2 * 1024 * 1024 + 1)
+        .unwrap();
+    assert_aborted(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    fs::remove_file(dir.path().join("large.py")).unwrap();
+    // An existing baseline path becoming binary is not proof of deletion.
+    fs::write(dir.path().join("safe.py"), [0, 1, 2, 3]).unwrap();
+    let binary = assert_aborted(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
+    assert!(
+        binary.last().unwrap()["reason_codes"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("snapshot.base_path_excluded"))
+    );
+}
+
+#[test]
+fn events_scope_changes_cannot_be_mistaken_for_source_deletions() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("kept.py"), "value = 1\n").unwrap();
+    let base_output = events_engine(dir.path(), &[]);
+    successful(&base_output);
+    let base = validated_events(&base_output);
+    let baseline = outside.path().join("base.json");
+    fs::write(&baseline, serde_json::to_vec(manifest(&base)).unwrap()).unwrap();
+    fs::write(dir.path().join(".gitignore"), "kept.py\n").unwrap();
+    // Changed selection is incompatible before any streaming mutation.
+    assert_input_rejected(&events_engine(
+        dir.path(),
+        &["--since", baseline.to_str().unwrap()],
+    ));
 }
