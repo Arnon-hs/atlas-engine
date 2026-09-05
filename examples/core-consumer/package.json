@@ -1,0 +1,13 @@
+{
+  "name": "atlas-engine-core-consumer-example",
+  "version": "0.4.2",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test adapter.test.mjs"
+  }
+}
