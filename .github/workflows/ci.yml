@@ -131,5 +131,6 @@ jobs:
           node-version: '22'
           package-manager-cache: false
       - run: node --test examples/node-consumer/consumer.test.mjs
+      - run: node --test examples/core-consumer/adapter.test.mjs
       - run: python3 scripts/check_repository.py
       - run: python3 -m unittest discover -s scripts/tests

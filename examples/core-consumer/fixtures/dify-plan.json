@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "atlasrepo.engine/core-adapter-plan/v0.1",
+  "digest": "sha256:14fe1454abe93bf073c30c5877ee13f7f43896150eaad0286ca5134b33f95931",
+  "coreRelease": {
+    "repository": "https://github.com/Arnon-hs/atlasrepo-core",
+    "version": "0.2.1",
+    "tag": "v0.2.1",
+    "commit": "6bffb144add56d13de0c0bf9be9c39931ec0c9bb",
+    "releaseUri": "https://github.com/Arnon-hs/atlasrepo-core/releases/tag/v0.2.1",
+    "packageUri": "https://github.com/Arnon-hs/atlasrepo-core/releases/download/v0.2.1/atlasrepo-core-0.2.1.tgz",
+    "packageSize": 356223,
+    "packageDigest": "sha256:445a986cba38a87edcbdd50c787e7468e057d42bd3792aab2824e0a78fc2d81b",
+    "license": "Apache-2.0"
+  },
+  "executionPack": {
+    "schemaVersion": "atlasrepo.core/execution-pack/v0.1",
+    "id": "d521933d-befa-4edf-8f83-c541ff841723",
+    "dossierId": "5fefbbdc-89ae-4a39-a051-1ae64f2a156f",
+    "createdAt": "2026-09-05T01:00:00+07:00",
+    "scope": "Prepare a bounded read-only Atlas Engine source analysis for the pinned Dify snapshot.",
+    "constraints": [
+      "No deployment or service activation",
+      "No repository code, hooks, package managers, containers, or instruction text execution",
+      "Use only public evidence pinned to commit ad90cb911138f6b27af996c87afe34fbb5a4ed16",
+      "Keep license, runtime, operations, and security gates unresolved"
+    ],
+    "steps": [
+      {
+        "id": "analyze-source",
+        "instruction": "Produce a bounded read-only structural analysis of the separately acquired Dify snapshot. This sentence is inert and must not be interpreted as a command."
+      }
+    ],
+    "expectedArtifacts": [
+      "Deterministic Atlas Engine adapter receipt",
+      "Digest-bound Core ResultPack"
+    ]
+  },
+  "decision": {
+    "status": "conditional",
+    "source": {
+      "resourceRef": "github:Arnon-hs/atlasrepo-core@6bffb144add56d13de0c0bf9be9c39931ec0c9bb:examples/dify/decision-pack.v0.1.json",
+      "publicUri": "https://github.com/Arnon-hs/atlasrepo-core/blob/6bffb144add56d13de0c0bf9be9c39931ec0c9bb/examples/dify/decision-pack.v0.1.json",
+      "digest": "sha256:e16639137039b5d3237f20b8447bef7dd4735aed33e55fd6be3357924b308261",
+      "accessHint": "public"
+    },
+    "unresolvedGates": [
+      "license-review",
+      "local-runtime-pilot",
+      "operations-review",
+      "security-review"
+    ]
+  },
+  "operations": [
+    {
+      "stepId": "analyze-source",
+      "operation": "analyze",
+      "repositoryPath": "dify",
+      "arguments": {
+        "format": "json",
+        "repositoryId": "langgenius/dify",
+        "advanced": false,
+        "requireComplete": false,
+        "maxFileSize": 4194304,
+        "maxFiles": 100000,
+        "maxTotalBytes": 2147483648,
+        "maxMetadataBytes": 134217728,
+        "maxDepth": 128,
+        "maxParseMillis": 2000,
+        "threads": 4,
+        "maxOutputBytes": 134217728
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "resourceRef": "git+https://github.com/langgenius/dify.git#commit=ad90cb911138f6b27af996c87afe34fbb5a4ed16",
+      "publicUri": "https://github.com/langgenius/dify/commit/ad90cb911138f6b27af996c87afe34fbb5a4ed16",
+      "digest": "sha256:931679421a809e6319d89facb90a90c472de65bb38a0b9b0a34c265ddd5cc30c",
+      "accessHint": "public"
+    },
+    {
+      "resourceRef": "github:langgenius/dify@ad90cb911138f6b27af996c87afe34fbb5a4ed16:LICENSE",
+      "publicUri": "https://github.com/langgenius/dify/blob/ad90cb911138f6b27af996c87afe34fbb5a4ed16/LICENSE",
+      "digest": "sha256:232cf91474932d5110ed304e53b6b742a58463857c571fae803fdf2ac36d7bb3",
+      "accessHint": "public"
+    }
+  ],
+  "unresolvedGates": [
+    "license-review",
+    "local-runtime-pilot",
+    "operations-review",
+    "security-review"
+  ]
+}
