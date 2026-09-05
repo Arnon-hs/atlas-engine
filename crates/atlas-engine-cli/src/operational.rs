@@ -324,10 +324,20 @@ impl<W: Write> BoundedHashWriter<W> {
             destination,
             committed,
             bytes_written: self.bytes_written,
-            sha256: committed.then(|| format!("{:x}", self.hasher.clone().finalize())),
+            sha256: committed.then(|| encode_hex(&self.hasher.clone().finalize())),
             limit_bytes: self.limit_bytes,
         }
     }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 impl<W: Write> Write for BoundedHashWriter<W> {

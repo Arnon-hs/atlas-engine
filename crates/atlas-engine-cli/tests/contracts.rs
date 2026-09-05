@@ -74,6 +74,33 @@ fn validate(schema: &str, instance: &Value) {
     );
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn assert_sha256_receipt(receipt: &Value, bytes: &[u8]) {
+    let actual = receipt["output"]["sha256"].as_str().unwrap();
+    assert_eq!(actual.len(), 64);
+    assert!(actual.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(actual, actual.to_ascii_lowercase());
+    assert_eq!(actual, sha256_hex(bytes));
+}
+
+#[test]
+fn sha256_hex_matches_known_vector() {
+    assert_eq!(
+        sha256_hex(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+}
+
 fn assert_invalid(schema: &str, instance: &Value) {
     let schema: Value =
         serde_json::from_slice(&fs::read(root().join("schemas").join(schema)).unwrap()).unwrap();
@@ -952,10 +979,7 @@ fn structured_run_receipt_binds_stdout_bytes_and_digest() {
         events[0]["output"]["bytes_written"],
         output.stdout.len() as u64
     );
-    assert_eq!(
-        events[0]["output"]["sha256"],
-        format!("{:x}", Sha256::digest(&output.stdout))
-    );
+    assert_sha256_receipt(&events[0], &output.stdout);
 }
 
 #[test]
@@ -987,10 +1011,7 @@ fn atomic_file_output_matches_stdout_and_never_replaces_existing_files() {
     validate("diagnostic-event-v1.schema.json", &receipt);
     assert_eq!(receipt["output"]["destination"], "file");
     assert_eq!(receipt["output"]["committed"], true);
-    assert_eq!(
-        receipt["output"]["sha256"],
-        format!("{:x}", Sha256::digest(fs::read(&target).unwrap()))
-    );
+    assert_sha256_receipt(&receipt, &fs::read(&target).unwrap());
 
     let refused = engine(
         &[
@@ -1894,7 +1915,7 @@ fn passive_external_evidence_is_bound_and_result_digest_is_verified() {
     let result_bytes = br#"{"runs":[]}"#;
     let result_path = outside.path().join("result.sarif");
     fs::write(&result_path, result_bytes).unwrap();
-    let result_sha = format!("{:x}", Sha256::digest(result_bytes));
+    let result_sha = sha256_hex(result_bytes);
     let mut evidence = repo_security::ExternalSecurityEvidence {
         schema_version: repo_security::EXTERNAL_EVIDENCE_SCHEMA_VERSION.into(),
         evidence_id: "0".repeat(64),
