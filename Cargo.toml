@@ -48,7 +48,7 @@ rustix = { version = "1.1.4", features = ["fs"] }
 tempfile = "3.27.0"
 proptest = "1.11.0"
 criterion = { version = "0.8.2", default-features = false }
-jsonschema = { version = "0.52.0", default-features = false }
+jsonschema = { version = "0.56.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
